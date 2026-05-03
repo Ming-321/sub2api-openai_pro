@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,6 +21,15 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
+
+func TestIsOpenAIAccountPoolUnavailableError(t *testing.T) {
+	require.True(t, isOpenAIAccountPoolUnavailableError(service.ErrNoAvailableAccounts))
+	require.True(t, isOpenAIAccountPoolUnavailableError(fmt.Errorf("scheduler: %w", service.ErrNoAvailableAccounts)))
+	require.True(t, isOpenAIAccountPoolUnavailableError(service.ErrNoAvailableCompactAccounts))
+	require.False(t, isOpenAIAccountPoolUnavailableError(fmt.Errorf("%w supporting model: gpt-5", service.ErrNoAvailableAccounts)))
+	require.False(t, isOpenAIAccountPoolUnavailableError(fmt.Errorf("%w supporting model: gpt-5 (channel pricing restriction)", service.ErrNoAvailableAccounts)))
+	require.False(t, isOpenAIAccountPoolUnavailableError(errors.New("invalid request")))
+}
 
 func TestOpenAIHandleStreamingAwareError_JSONEscaping(t *testing.T) {
 	tests := []struct {

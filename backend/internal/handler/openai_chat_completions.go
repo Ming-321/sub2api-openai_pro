@@ -100,6 +100,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	activeAPIKey := apiKey
 	activeSubscription := subscription
 	var overflowedFromGroupID *int64
+	var accountSelectOverflowSourceErr error
 
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), activeAPIKey.User, activeAPIKey, activeAPIKey.Group, activeSubscription); err != nil {
 		var resolveErr error
@@ -175,6 +176,25 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					}
 				}
 				if err != nil {
+					if resolvedAPIKey, resolvedSubscription, resolvedOverflowedFromGroupID, switched := h.resolveActiveAPIKeyAfterAccountSelectError(
+						c.Request.Context(),
+						apiKey,
+						activeAPIKey,
+						err,
+						reqModel,
+						reqLog,
+					); switched {
+						activeAPIKey = resolvedAPIKey
+						activeSubscription = resolvedSubscription
+						overflowedFromGroupID = resolvedOverflowedFromGroupID
+						accountSelectOverflowSourceErr = err
+						channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), activeAPIKey.GroupID, reqModel)
+						continue
+					}
+					if accountSelectOverflowSourceErr != nil {
+						logOpenAIAccountSelectOverflowFailed(reqLog, apiKey, apiKey.GroupID, activeAPIKey.GroupID, reqModel, accountSelectOverflowSourceErr, err)
+						accountSelectOverflowSourceErr = nil
+					}
 					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Service temporarily unavailable", streamStarted)
 					return
 				}
@@ -192,6 +212,10 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			return
 		}
 		account := selection.Account
+		if accountSelectOverflowSourceErr != nil && overflowedFromGroupID != nil {
+			logOpenAIAccountSelectOverflowSelected(reqLog, apiKey, apiKey.GroupID, activeAPIKey.GroupID, reqModel, account.ID)
+			accountSelectOverflowSourceErr = nil
+		}
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai_chat_completions.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		_ = scheduleDecision

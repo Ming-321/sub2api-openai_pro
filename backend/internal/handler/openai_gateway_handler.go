@@ -107,6 +107,80 @@ func (h *OpenAIGatewayHandler) resolveActiveAPIKeyAfterBillingError(
 	return activeAPIKey, nil, resolution.OverflowedFromGroupID, nil
 }
 
+func isOpenAIAccountPoolUnavailableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, service.ErrNoAvailableCompactAccounts) {
+		return true
+	}
+	if !errors.Is(err, service.ErrNoAvailableAccounts) {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return !strings.Contains(msg, "supporting model") && !strings.Contains(msg, "channel pricing restriction")
+}
+
+func (h *OpenAIGatewayHandler) resolveActiveAPIKeyAfterAccountSelectError(
+	ctx context.Context,
+	originalAPIKey *service.APIKey,
+	activeAPIKey *service.APIKey,
+	selectionErr error,
+	model string,
+	reqLog *zap.Logger,
+) (*service.APIKey, *service.UserSubscription, *int64, bool) {
+	if !isOpenAIAccountPoolUnavailableError(selectionErr) {
+		return activeAPIKey, nil, nil, false
+	}
+	if h.apiKeyService == nil || h.billingCacheService == nil || originalAPIKey == nil || originalAPIKey.GroupID == nil {
+		return activeAPIKey, nil, nil, false
+	}
+	if activeAPIKey != nil && activeAPIKey.GroupID != nil && *activeAPIKey.GroupID != *originalAPIKey.GroupID {
+		return activeAPIKey, nil, nil, false
+	}
+	resolution, err := h.apiKeyService.ResolveQuotaShareOverflowForAccountSelection(ctx, originalAPIKey)
+	if err != nil {
+		logOpenAIAccountSelectOverflowFailed(reqLog, originalAPIKey, originalAPIKey.GroupID, originalAPIKey.QuotaShareOverflowGroupID, model, selectionErr, err)
+		return activeAPIKey, nil, nil, false
+	}
+	if resolution == nil || !resolution.Overflowed || resolution.ActiveAPIKey == nil {
+		return activeAPIKey, nil, nil, false
+	}
+	overflowAPIKey := resolution.ActiveAPIKey
+	if err := h.billingCacheService.CheckBillingEligibility(ctx, overflowAPIKey.User, overflowAPIKey, overflowAPIKey.Group, nil); err != nil {
+		logOpenAIAccountSelectOverflowFailed(reqLog, originalAPIKey, resolution.OverflowedFromGroupID, overflowAPIKey.GroupID, model, selectionErr, err)
+		return activeAPIKey, nil, nil, false
+	}
+	return overflowAPIKey, nil, resolution.OverflowedFromGroupID, true
+}
+
+func logOpenAIAccountSelectOverflowSelected(reqLog *zap.Logger, apiKey *service.APIKey, fromGroupID *int64, overflowGroupID *int64, model string, accountID int64) {
+	if reqLog == nil || apiKey == nil || fromGroupID == nil || overflowGroupID == nil {
+		return
+	}
+	reqLog.Info("openai.account_select_overflow_selected",
+		zap.Int64("api_key_id", apiKey.ID),
+		zap.Int64("from_group_id", *fromGroupID),
+		zap.Int64("overflow_group_id", *overflowGroupID),
+		zap.String("model", model),
+		zap.Int64("selected_account_id", accountID),
+	)
+}
+
+func logOpenAIAccountSelectOverflowFailed(reqLog *zap.Logger, apiKey *service.APIKey, fromGroupID *int64, overflowGroupID *int64, model string, originalErr error, fallbackErr error) {
+	if reqLog == nil || apiKey == nil || fromGroupID == nil || overflowGroupID == nil {
+		return
+	}
+	reqLog.Warn("openai.account_select_overflow_failed",
+		zap.Int64("api_key_id", apiKey.ID),
+		zap.Int64("from_group_id", *fromGroupID),
+		zap.Int64("overflow_group_id", *overflowGroupID),
+		zap.String("model", model),
+		zap.NamedError("original_error", originalErr),
+		zap.NamedError("fallback_error", fallbackErr),
+	)
+}
+
 // Responses handles OpenAI Responses API endpoint
 // POST /openai/v1/responses
 func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
@@ -248,6 +322,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	activeAPIKey := apiKey
 	activeSubscription := subscription
 	var overflowedFromGroupID *int64
+	var accountSelectOverflowSourceErr error
 
 	// 2. Re-check billing eligibility after wait
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), activeAPIKey.User, activeAPIKey, activeAPIKey.Group, activeSubscription); err != nil {
@@ -302,6 +377,25 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if len(failedAccountIDs) == 0 {
+				if resolvedAPIKey, resolvedSubscription, resolvedOverflowedFromGroupID, switched := h.resolveActiveAPIKeyAfterAccountSelectError(
+					c.Request.Context(),
+					apiKey,
+					activeAPIKey,
+					err,
+					reqModel,
+					reqLog,
+				); switched {
+					activeAPIKey = resolvedAPIKey
+					activeSubscription = resolvedSubscription
+					overflowedFromGroupID = resolvedOverflowedFromGroupID
+					accountSelectOverflowSourceErr = err
+					channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), activeAPIKey.GroupID, reqModel)
+					continue
+				}
+				if accountSelectOverflowSourceErr != nil {
+					logOpenAIAccountSelectOverflowFailed(reqLog, apiKey, apiKey.GroupID, activeAPIKey.GroupID, reqModel, accountSelectOverflowSourceErr, err)
+					accountSelectOverflowSourceErr = nil
+				}
 				if errors.Is(err, service.ErrNoAvailableCompactAccounts) {
 					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "compact_not_supported", "No available OpenAI accounts support /responses/compact", streamStarted)
 					return
@@ -638,6 +732,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	activeAPIKey := apiKey
 	activeSubscription := subscription
 	var overflowedFromGroupID *int64
+	var accountSelectOverflowSourceErr error
 
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), activeAPIKey.User, activeAPIKey, activeAPIKey.Group, activeSubscription); err != nil {
 		var resolveErr error
@@ -710,10 +805,29 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if len(failedAccountIDs) == 0 {
-				if err != nil {
-					h.anthropicStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Service temporarily unavailable", streamStarted)
-					return
+				if resolvedAPIKey, resolvedSubscription, resolvedOverflowedFromGroupID, switched := h.resolveActiveAPIKeyAfterAccountSelectError(
+					c.Request.Context(),
+					apiKey,
+					activeAPIKey,
+					err,
+					currentRoutingModel,
+					reqLog,
+				); switched {
+					activeAPIKey = resolvedAPIKey
+					activeSubscription = resolvedSubscription
+					overflowedFromGroupID = resolvedOverflowedFromGroupID
+					accountSelectOverflowSourceErr = err
+					channelMappingMsg, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), activeAPIKey.GroupID, reqModel)
+					preferredMappedModel = resolveOpenAIMessagesDispatchMappedModel(activeAPIKey, reqModel)
+					effectiveMappedModel = preferredMappedModel
+					continue
 				}
+				if accountSelectOverflowSourceErr != nil {
+					logOpenAIAccountSelectOverflowFailed(reqLog, apiKey, apiKey.GroupID, activeAPIKey.GroupID, currentRoutingModel, accountSelectOverflowSourceErr, err)
+					accountSelectOverflowSourceErr = nil
+				}
+				h.anthropicStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Service temporarily unavailable", streamStarted)
+				return
 			} else {
 				if lastFailoverErr != nil {
 					h.handleAnthropicFailoverExhausted(c, lastFailoverErr, streamStarted)
@@ -728,6 +842,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			return
 		}
 		account := selection.Account
+		if accountSelectOverflowSourceErr != nil && overflowedFromGroupID != nil {
+			logOpenAIAccountSelectOverflowSelected(reqLog, apiKey, apiKey.GroupID, activeAPIKey.GroupID, reqModel, account.ID)
+			accountSelectOverflowSourceErr = nil
+		}
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai_messages.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		_ = scheduleDecision
@@ -1208,6 +1326,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	activeAPIKey := apiKey
 	activeSubscription := subscription
 	var overflowedFromGroupID *int64
+	var accountSelectOverflowSourceErr error
 	if err := h.billingCacheService.CheckBillingEligibility(ctx, activeAPIKey.User, activeAPIKey, activeAPIKey.Group, activeSubscription); err != nil {
 		var resolveErr error
 		activeAPIKey, activeSubscription, overflowedFromGroupID, resolveErr = h.resolveActiveAPIKeyAfterBillingError(ctx, apiKey, subscription, err)
@@ -1232,18 +1351,47 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		firstMessage,
 		openAIWSIngressFallbackSessionSeed(subject.UserID, activeAPIKey.ID, activeAPIKey.GroupID),
 	)
-	selection, scheduleDecision, err := h.gatewayService.SelectAccountWithScheduler(
-		ctx,
-		activeAPIKey.GroupID,
-		previousResponseID,
-		sessionHash,
-		reqModel,
-		nil,
-		service.OpenAIUpstreamTransportResponsesWebsocketV2,
-		false,
-	)
-	if err != nil {
+	var selection *service.AccountSelectionResult
+	var scheduleDecision service.OpenAIAccountScheduleDecision
+	for {
+		selection, scheduleDecision, err = h.gatewayService.SelectAccountWithScheduler(
+			ctx,
+			activeAPIKey.GroupID,
+			previousResponseID,
+			sessionHash,
+			reqModel,
+			nil,
+			service.OpenAIUpstreamTransportResponsesWebsocketV2,
+			false,
+		)
+		if err == nil {
+			break
+		}
 		reqLog.Warn("openai.websocket_account_select_failed", zap.Error(err))
+		if resolvedAPIKey, resolvedSubscription, resolvedOverflowedFromGroupID, switched := h.resolveActiveAPIKeyAfterAccountSelectError(
+			ctx,
+			apiKey,
+			activeAPIKey,
+			err,
+			reqModel,
+			reqLog,
+		); switched {
+			activeAPIKey = resolvedAPIKey
+			activeSubscription = resolvedSubscription
+			overflowedFromGroupID = resolvedOverflowedFromGroupID
+			accountSelectOverflowSourceErr = err
+			channelMappingWS, _ = h.gatewayService.ResolveChannelMappingAndRestrict(ctx, activeAPIKey.GroupID, reqModel)
+			sessionHash = h.gatewayService.GenerateSessionHashWithFallback(
+				c,
+				firstMessage,
+				openAIWSIngressFallbackSessionSeed(subject.UserID, activeAPIKey.ID, activeAPIKey.GroupID),
+			)
+			continue
+		}
+		if accountSelectOverflowSourceErr != nil {
+			logOpenAIAccountSelectOverflowFailed(reqLog, apiKey, apiKey.GroupID, activeAPIKey.GroupID, reqModel, accountSelectOverflowSourceErr, err)
+			accountSelectOverflowSourceErr = nil
+		}
 		closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "no available account")
 		return
 	}
@@ -1253,6 +1401,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	}
 
 	account := selection.Account
+	if accountSelectOverflowSourceErr != nil && overflowedFromGroupID != nil {
+		logOpenAIAccountSelectOverflowSelected(reqLog, apiKey, apiKey.GroupID, activeAPIKey.GroupID, reqModel, account.ID)
+		accountSelectOverflowSourceErr = nil
+	}
 	accountMaxConcurrency := account.Concurrency
 	if selection.WaitPlan != nil && selection.WaitPlan.MaxConcurrency > 0 {
 		accountMaxConcurrency = selection.WaitPlan.MaxConcurrency

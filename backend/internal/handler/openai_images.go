@@ -108,6 +108,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	activeAPIKey := apiKey
 	activeSubscription := subscription
 	var overflowedFromGroupID *int64
+	var accountSelectOverflowSourceErr error
 
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), activeAPIKey.User, activeAPIKey, activeAPIKey.Group, activeSubscription); err != nil {
 		var resolveErr error
@@ -155,6 +156,25 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if len(failedAccountIDs) == 0 {
+				if resolvedAPIKey, resolvedSubscription, resolvedOverflowedFromGroupID, switched := h.resolveActiveAPIKeyAfterAccountSelectError(
+					c.Request.Context(),
+					apiKey,
+					activeAPIKey,
+					err,
+					parsed.Model,
+					reqLog,
+				); switched {
+					activeAPIKey = resolvedAPIKey
+					activeSubscription = resolvedSubscription
+					overflowedFromGroupID = resolvedOverflowedFromGroupID
+					accountSelectOverflowSourceErr = err
+					channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), activeAPIKey.GroupID, parsed.Model)
+					continue
+				}
+				if accountSelectOverflowSourceErr != nil {
+					logOpenAIAccountSelectOverflowFailed(reqLog, apiKey, apiKey.GroupID, activeAPIKey.GroupID, parsed.Model, accountSelectOverflowSourceErr, err)
+					accountSelectOverflowSourceErr = nil
+				}
 				h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available compatible accounts", streamStarted)
 				return
 			}
@@ -169,7 +189,6 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available compatible accounts", streamStarted)
 			return
 		}
-
 		reqLog.Debug("openai.images.account_schedule_decision",
 			zap.String("layer", scheduleDecision.Layer),
 			zap.Bool("sticky_session_hit", scheduleDecision.StickySessionHit),
@@ -180,6 +199,10 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		)
 
 		account := selection.Account
+		if accountSelectOverflowSourceErr != nil && overflowedFromGroupID != nil {
+			logOpenAIAccountSelectOverflowSelected(reqLog, apiKey, apiKey.GroupID, activeAPIKey.GroupID, parsed.Model, account.ID)
+			accountSelectOverflowSourceErr = nil
+		}
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai.images.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		setOpsSelectedAccount(c, account.ID, account.Platform)

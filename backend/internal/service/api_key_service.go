@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -232,15 +233,31 @@ func (s *APIKeyService) ResolveQuotaShareOverflow(ctx context.Context, apiKey *A
 	if !IsQuotaShareExceededError(billingErr) {
 		return nil, billingErr
 	}
-	if apiKey == nil || apiKey.GroupID == nil || apiKey.Group == nil || !apiKey.Group.IsQuotaShareType() {
+	resolution, err := s.resolveQuotaShareOverflow(ctx, apiKey)
+	if err != nil {
 		return nil, billingErr
+	}
+	if resolution == nil {
+		return nil, billingErr
+	}
+	return resolution, nil
+}
+
+func (s *APIKeyService) ResolveQuotaShareOverflowForAccountSelection(ctx context.Context, apiKey *APIKey) (*QuotaShareOverflowResolution, error) {
+	return s.resolveQuotaShareOverflow(ctx, apiKey)
+}
+
+func (s *APIKeyService) resolveQuotaShareOverflow(ctx context.Context, apiKey *APIKey) (*QuotaShareOverflowResolution, error) {
+	if apiKey == nil || apiKey.GroupID == nil || apiKey.Group == nil || !apiKey.Group.IsQuotaShareType() {
+		return nil, nil
 	}
 	if apiKey.QuotaShareOverflowGroupID == nil || *apiKey.QuotaShareOverflowGroupID <= 0 {
-		return nil, billingErr
+		return nil, nil
 	}
 	if s == nil || s.groupRepo == nil {
+		err := errors.New("quota_share overflow resolver unavailable")
 		slog.Warn("quota_share overflow resolver unavailable", "api_key_id", apiKey.ID)
-		return nil, billingErr
+		return nil, err
 	}
 
 	overflowGroup, err := s.groupRepo.GetByID(ctx, *apiKey.QuotaShareOverflowGroupID)
@@ -250,7 +267,7 @@ func (s *APIKeyService) ResolveQuotaShareOverflow(ctx context.Context, apiKey *A
 			"overflow_group_id", *apiKey.QuotaShareOverflowGroupID,
 			"error", err,
 		)
-		return nil, billingErr
+		return nil, err
 	}
 	if err := validateQuotaShareOverflowGroup(apiKey.GroupID, overflowGroup); err != nil {
 		slog.Warn("quota_share overflow group invalid",
@@ -258,7 +275,7 @@ func (s *APIKeyService) ResolveQuotaShareOverflow(ctx context.Context, apiKey *A
 			"overflow_group_id", overflowGroup.ID,
 			"error", err,
 		)
-		return nil, billingErr
+		return nil, err
 	}
 
 	overflowGroupID := overflowGroup.ID

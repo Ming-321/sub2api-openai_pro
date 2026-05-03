@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -65,7 +66,9 @@ func (c *quotaShareCacheStub) GetAndResetLocalUSD(ctx context.Context, groupID i
 }
 
 type quotaShareUsageRepoStub struct {
-	calls []windowQuery
+	calls        []windowQuery
+	usageByStart map[int64]float64
+	err          error
 }
 
 type windowQuery struct {
@@ -76,6 +79,12 @@ type windowQuery struct {
 
 func (r *quotaShareUsageRepoStub) SumAPIKeyActualCostInWindow(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) (float64, error) {
 	r.calls = append(r.calls, windowQuery{apiKeyID: apiKeyID, start: startTime, end: endTime})
+	if r.err != nil {
+		return 0, r.err
+	}
+	if r.usageByStart != nil {
+		return r.usageByStart[startTime.Unix()], nil
+	}
 	switch startTime.Unix() {
 	case 1719990000:
 		return 1.25, nil
@@ -112,6 +121,135 @@ func TestQuotaShareServiceGetKeyUsageUsesDBWindowTotals(t *testing.T) {
 	require.Equal(t, time.Unix(1720008000, 0), usageRepo.calls[0].end)
 	require.Equal(t, time.Unix(1720594800, 0), usageRepo.calls[1].start)
 	require.Equal(t, time.Unix(1721203200, 0), usageRepo.calls[1].end)
+}
+
+func TestQuotaShareServiceCheckLimitsUsesMaxOfRedisAndDBFor5h(t *testing.T) {
+	now := time.Now().Unix()
+	state := &QuotaShareGroupState{
+		Window5hStart:       now - int64(time.Hour/time.Second),
+		Window5hEnd:         now + int64(time.Hour/time.Second),
+		Window7dStart:       now - int64((2*time.Hour)/time.Second),
+		Window7dEnd:         now + int64(time.Hour/time.Second),
+		Estimated5hLimitUSD: 10,
+		Estimated7dLimitUSD: 100,
+	}
+	group := &Group{ID: 7, SubscriptionType: SubscriptionTypeQuotaShare}
+	apiKey := &APIKey{ID: 88, QuotaWeight: 1}
+
+	t.Run("db_exceeds_when_redis_is_lower", func(t *testing.T) {
+		cache := &quotaShareCacheStub{
+			state:       state,
+			keyUsage:    &QuotaShareKeyUsage{Usage5h: 5, Usage7d: 1},
+			totalWeight: 1,
+		}
+		usageRepo := &quotaShareUsageRepoStub{usageByStart: map[int64]float64{
+			state.Window5hStart: 10,
+			state.Window7dStart: 1,
+		}}
+		svc := NewQuotaShareService(cache, nil, nil, usageRepo)
+
+		err := svc.CheckLimits(context.Background(), apiKey, group)
+		require.ErrorIs(t, err, ErrQuotaShare5hExceeded)
+		require.Len(t, usageRepo.calls, 1)
+	})
+
+	t.Run("redis_exceeds_when_db_is_lower", func(t *testing.T) {
+		cache := &quotaShareCacheStub{
+			state:       state,
+			keyUsage:    &QuotaShareKeyUsage{Usage5h: 10, Usage7d: 1},
+			totalWeight: 1,
+		}
+		usageRepo := &quotaShareUsageRepoStub{usageByStart: map[int64]float64{
+			state.Window5hStart: 5,
+			state.Window7dStart: 1,
+		}}
+		svc := NewQuotaShareService(cache, nil, nil, usageRepo)
+
+		err := svc.CheckLimits(context.Background(), apiKey, group)
+		require.ErrorIs(t, err, ErrQuotaShare5hExceeded)
+		require.Len(t, usageRepo.calls, 1)
+	})
+
+	t.Run("both_below_limit_allows", func(t *testing.T) {
+		cache := &quotaShareCacheStub{
+			state:       state,
+			keyUsage:    &QuotaShareKeyUsage{Usage5h: 4, Usage7d: 1},
+			totalWeight: 1,
+		}
+		usageRepo := &quotaShareUsageRepoStub{usageByStart: map[int64]float64{
+			state.Window5hStart: 6,
+			state.Window7dStart: 1,
+		}}
+		svc := NewQuotaShareService(cache, nil, nil, usageRepo)
+
+		err := svc.CheckLimits(context.Background(), apiKey, group)
+		require.NoError(t, err)
+		require.Len(t, usageRepo.calls, 2)
+	})
+}
+
+func TestQuotaShareServiceCheckLimitsDBFailureFallsBackToRedis(t *testing.T) {
+	now := time.Now().Unix()
+	state := &QuotaShareGroupState{
+		Window5hStart:       now - int64(time.Hour/time.Second),
+		Window5hEnd:         now + int64(time.Hour/time.Second),
+		Estimated5hLimitUSD: 10,
+	}
+	group := &Group{ID: 7, SubscriptionType: SubscriptionTypeQuotaShare}
+	apiKey := &APIKey{ID: 88, QuotaWeight: 1}
+	dbErr := errors.New("db temporarily unavailable")
+
+	t.Run("redis_below_allows", func(t *testing.T) {
+		cache := &quotaShareCacheStub{
+			state:       state,
+			keyUsage:    &QuotaShareKeyUsage{Usage5h: 9},
+			totalWeight: 1,
+		}
+		svc := NewQuotaShareService(cache, nil, nil, &quotaShareUsageRepoStub{err: dbErr})
+
+		err := svc.CheckLimits(context.Background(), apiKey, group)
+		require.NoError(t, err)
+	})
+
+	t.Run("redis_exceeds_blocks", func(t *testing.T) {
+		cache := &quotaShareCacheStub{
+			state:       state,
+			keyUsage:    &QuotaShareKeyUsage{Usage5h: 10},
+			totalWeight: 1,
+		}
+		svc := NewQuotaShareService(cache, nil, nil, &quotaShareUsageRepoStub{err: dbErr})
+
+		err := svc.CheckLimits(context.Background(), apiKey, group)
+		require.ErrorIs(t, err, ErrQuotaShare5hExceeded)
+	})
+}
+
+func TestQuotaShareServiceCheckLimitsUsesMaxOfRedisAndDBFor7d(t *testing.T) {
+	now := time.Now().Unix()
+	state := &QuotaShareGroupState{
+		Window5hStart:       now - int64(time.Hour/time.Second),
+		Window5hEnd:         now + int64(time.Hour/time.Second),
+		Window7dStart:       now - int64((2*time.Hour)/time.Second),
+		Window7dEnd:         now + int64(time.Hour/time.Second),
+		Estimated5hLimitUSD: 100,
+		Estimated7dLimitUSD: 10,
+	}
+	group := &Group{ID: 7, SubscriptionType: SubscriptionTypeQuotaShare}
+	apiKey := &APIKey{ID: 88, QuotaWeight: 1}
+	cache := &quotaShareCacheStub{
+		state:       state,
+		keyUsage:    &QuotaShareKeyUsage{Usage5h: 1, Usage7d: 5},
+		totalWeight: 1,
+	}
+	usageRepo := &quotaShareUsageRepoStub{usageByStart: map[int64]float64{
+		state.Window5hStart: 1,
+		state.Window7dStart: 10,
+	}}
+	svc := NewQuotaShareService(cache, nil, nil, usageRepo)
+
+	err := svc.CheckLimits(context.Background(), apiKey, group)
+	require.ErrorIs(t, err, ErrQuotaShare7dExceeded)
+	require.Len(t, usageRepo.calls, 2)
 }
 
 func TestQuotaShareServiceUpdateGlobalWindowKeepsSmallDriftWindow(t *testing.T) {

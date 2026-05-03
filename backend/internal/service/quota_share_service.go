@@ -167,13 +167,13 @@ func (s *QuotaShareService) CheckLimits(ctx context.Context, apiKey *APIKey, gro
 		return nil
 	}
 
-	usage, err := s.cache.GetKeyUsage(ctx, group.ID, apiKey.ID)
+	redisUsage, err := s.cache.GetKeyUsage(ctx, group.ID, apiKey.ID)
 	if err != nil {
 		slog.Warn("quota_share: failed to get key usage, allowing request", "key_id", apiKey.ID, "error", err)
 		return nil
 	}
-	if usage == nil {
-		return nil
+	if redisUsage == nil {
+		redisUsage = &QuotaShareKeyUsage{}
 	}
 
 	totalWeight, err := s.getTotalWeight(ctx, group.ID)
@@ -195,7 +195,17 @@ func (s *QuotaShareService) CheckLimits(ctx context.Context, apiKey *APIKey, gro
 	// Check 5h window
 	if window5hActive && est5h > 0 {
 		limit5h := est5h * ratio
-		if usage.Usage5h >= limit5h {
+		redis5h, db5h, effective5h, source5h := s.effectiveKeyWindowUsage(ctx, apiKey.ID, state.Window5hStart, state.Window5hEnd, redisUsage.Usage5h)
+		if effective5h >= limit5h {
+			slog.Info("quota_share: 5h window limit exceeded",
+				"api_key_id", apiKey.ID,
+				"group_id", group.ID,
+				"redis_usage", redis5h,
+				"db_usage", db5h,
+				"effective_usage", effective5h,
+				"limit", limit5h,
+				"source", source5h,
+			)
 			return ErrQuotaShare5hExceeded
 		}
 	}
@@ -203,12 +213,55 @@ func (s *QuotaShareService) CheckLimits(ctx context.Context, apiKey *APIKey, gro
 	// Check 7d window
 	if window7dActive && est7d > 0 {
 		limit7d := est7d * ratio
-		if usage.Usage7d >= limit7d {
+		redis7d, db7d, effective7d, source7d := s.effectiveKeyWindowUsage(ctx, apiKey.ID, state.Window7dStart, state.Window7dEnd, redisUsage.Usage7d)
+		if effective7d >= limit7d {
+			slog.Info("quota_share: 7d window limit exceeded",
+				"api_key_id", apiKey.ID,
+				"group_id", group.ID,
+				"redis_usage", redis7d,
+				"db_usage", db7d,
+				"effective_usage", effective7d,
+				"limit", limit7d,
+				"source", source7d,
+			)
 			return ErrQuotaShare7dExceeded
 		}
 	}
 
 	return nil
+}
+
+func (s *QuotaShareService) effectiveKeyWindowUsage(ctx context.Context, apiKeyID int64, windowStart, windowEnd int64, redisUsage float64) (redisValue, dbValue, effective float64, source string) {
+	redisValue = redisUsage
+	dbValue = 0
+	effective = redisUsage
+	source = "redis"
+	if s.usageRepo == nil {
+		return redisValue, dbValue, effective, source
+	}
+
+	dbUsage, err := s.sumKeyWindowActualCost(ctx, apiKeyID, windowStart, windowEnd)
+	if err != nil {
+		slog.Warn("quota_share: failed to get DB-backed key usage, falling back to Redis",
+			"api_key_id", apiKeyID,
+			"window_start", windowStart,
+			"window_end", windowEnd,
+			"redis_usage", redisUsage,
+			"error", err,
+		)
+		return redisValue, dbValue, effective, source
+	}
+
+	dbValue = dbUsage
+	if dbUsage > redisUsage {
+		effective = dbUsage
+		source = "db"
+		return redisValue, dbValue, effective, source
+	}
+	if dbUsage == redisUsage {
+		source = "redis_db_equal"
+	}
+	return redisValue, dbValue, effective, source
 }
 
 // RecordUsage records the cost of a completed request against the key's quota_share usage.
