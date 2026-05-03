@@ -115,6 +115,15 @@ func (APIKey) Fields() []ent.Field {
 			Optional().
 			Nillable().
 			Comment("Start time of the current 7d rate limit window"),
+
+		// ========== Quota Share fields ==========
+		field.Int("quota_weight").
+			Default(1).
+			Comment("Weight for quota distribution in quota_share groups (default 1)"),
+		field.Int64("quota_share_overflow_group_id").
+			Optional().
+			Nillable().
+			Comment("Key-level OpenAI standard group used after quota_share limits are exceeded"),
 	}
 }
 

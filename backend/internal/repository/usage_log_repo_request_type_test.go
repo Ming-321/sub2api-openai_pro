@@ -49,6 +49,7 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			log.RequestedModel,
 			sqlmock.AnyArg(), // upstream_model
 			sqlmock.AnyArg(), // group_id
+			sqlmock.AnyArg(), // overflowed_from_group_id
 			sqlmock.AnyArg(), // subscription_id
 			log.InputTokens,
 			log.OutputTokens,
@@ -126,6 +127,7 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			log.RequestID,
 			log.Model,
 			log.RequestedModel,
+			sqlmock.AnyArg(),
 			sqlmock.AnyArg(),
 			sqlmock.AnyArg(),
 			sqlmock.AnyArg(),
@@ -540,6 +542,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{Valid: true, String: "gpt-5"}, // requested_model
 			sql.NullString{},  // upstream_model
 			sql.NullInt64{},   // group_id
+			sql.NullInt64{},   // overflowed_from_group_id
 			sql.NullInt64{},   // subscription_id
 			1,                 // input_tokens
 			2,                 // output_tokens
@@ -600,6 +603,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},
 			sql.NullInt64{},
 			sql.NullInt64{},
+			sql.NullInt64{},
 			1, 2, 3, 4, 5, 6,
 			0, 0.0, // image_output_tokens, image_output_cost
 			0.1, 0.2, 0.3, 0.4, 1.0, 0.9,
@@ -646,6 +650,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			"gpt-5.4",
 			sql.NullString{Valid: true, String: "gpt-5.4"},
 			sql.NullString{},
+			sql.NullInt64{},
 			sql.NullInt64{},
 			sql.NullInt64{},
 			1, 2, 3, 4, 5, 6,

@@ -9,7 +9,8 @@ import type {
   GroupPlatform,
   CreateGroupRequest,
   UpdateGroupRequest,
-  PaginatedResponse
+  PaginatedResponse,
+  QuotaShareStatusResponse
 } from '@/types'
 
 /**
@@ -152,6 +153,11 @@ export async function getGroupApiKeys(
   const { data } = await apiClient.get<PaginatedResponse<any>>(`/admin/groups/${id}/api-keys`, {
     params: { page, page_size: pageSize }
   })
+  return data
+}
+
+export async function getQuotaShareStatus(id: number): Promise<QuotaShareStatusResponse> {
+  const { data } = await apiClient.get<QuotaShareStatusResponse>(`/admin/groups/${id}/quota-share-status`)
   return data
 }
 
@@ -312,6 +318,7 @@ export const groupsAPI = {
   toggleStatus,
   getStats,
   getGroupApiKeys,
+  getQuotaShareStatus,
   getGroupRateMultipliers,
   clearGroupRateMultipliers,
   batchSetGroupRateMultipliers,

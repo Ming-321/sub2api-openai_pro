@@ -51,6 +51,12 @@ type GatewayHandler struct {
 	maxAccountSwitchesGemini  int
 	cfg                       *config.Config
 	settingService            *service.SettingService
+	quotaShareService         *service.QuotaShareService
+}
+
+// SetQuotaShareService injects the QuotaShareService after construction.
+func (h *GatewayHandler) SetQuotaShareService(qs *service.QuotaShareService) {
+	h.quotaShareService = qs
 }
 
 // NewGatewayHandler creates a new GatewayHandler
@@ -1029,6 +1035,13 @@ func (h *GatewayHandler) Usage(c *gin.Context) {
 		}
 	}
 
+	// quota_share keys: return quota_share-specific limits and usage
+	isQuotaShare := apiKey.Group != nil && apiKey.Group.IsQuotaShareType()
+	if isQuotaShare {
+		h.usageQuotaShare(c, ctx, apiKey, usageData, modelStats)
+		return
+	}
+
 	// 判断模式: key 有总额度或速率限制 → quota_limited，否则 → unrestricted
 	isQuotaLimited := apiKey.Quota > 0 || apiKey.HasRateLimits()
 
@@ -1096,6 +1109,89 @@ func (h *GatewayHandler) buildUsageData(ctx context.Context, apiKeyID int64) gin
 }
 
 // usageQuotaLimited 处理 quota_limited 模式的响应
+func (h *GatewayHandler) usageQuotaShare(c *gin.Context, ctx context.Context, apiKey *service.APIKey, usageData gin.H, modelStats any) {
+	resp := gin.H{
+		"mode":    "quota_share",
+		"isValid": apiKey.Status == service.StatusAPIKeyActive,
+		"status":  apiKey.Status,
+		"weight":  apiKey.QuotaWeight,
+	}
+	if h.apiKeyService != nil {
+		if overflow := h.apiKeyService.GetQuotaShareOverflowStatus(ctx, apiKey); overflow != nil {
+			resp["overflow"] = gin.H{
+				"configured":        overflow.Configured,
+				"group_id":          overflow.GroupID,
+				"group_name":        overflow.GroupName,
+				"platform":          overflow.Platform,
+				"subscription_type": overflow.SubscriptionType,
+				"available":         overflow.Available,
+				"reason":            overflow.Reason,
+			}
+		}
+	}
+
+	if h.quotaShareService != nil && apiKey.Group != nil {
+		limit5h, limit7d, err := h.quotaShareService.GetKeyLimits(ctx, apiKey, apiKey.Group)
+		if err == nil {
+			keyUsage, usageErr := h.quotaShareService.GetKeyUsage(ctx, apiKey, apiKey.Group)
+			var used5h, used7d float64
+			if usageErr == nil && keyUsage != nil {
+				used5h = keyUsage.Usage5h
+				used7d = keyUsage.Usage7d
+			}
+
+			groupState, _ := h.quotaShareService.GetGroupState(ctx, apiKey.Group.ID)
+
+			var rateLimits []gin.H
+			entry5h := gin.H{
+				"window":    "5h",
+				"limit":     limit5h,
+				"used":      used5h,
+				"remaining": max(0, limit5h-used5h),
+				"unit":      "USD",
+			}
+			if groupState != nil && groupState.Window5hEnd > 0 {
+				entry5h["reset_at"] = time.Unix(groupState.Window5hEnd, 0)
+			}
+			rateLimits = append(rateLimits, entry5h)
+
+			entry7d := gin.H{
+				"window":    "7d",
+				"limit":     limit7d,
+				"used":      used7d,
+				"remaining": max(0, limit7d-used7d),
+				"unit":      "USD",
+			}
+			if groupState != nil && groupState.Window7dEnd > 0 {
+				entry7d["reset_at"] = time.Unix(groupState.Window7dEnd, 0)
+			}
+			rateLimits = append(rateLimits, entry7d)
+
+			resp["rate_limits"] = rateLimits
+
+			if groupState != nil {
+				resp["upstream"] = gin.H{
+					"used_5h_pct": groupState.Upstream5hPct,
+					"used_7d_pct": groupState.Upstream7dPct,
+				}
+			}
+		}
+	}
+
+	if apiKey.ExpiresAt != nil {
+		resp["expires_at"] = apiKey.ExpiresAt
+		resp["days_until_expiry"] = apiKey.GetDaysUntilExpiry()
+	}
+	if usageData != nil {
+		resp["usage"] = usageData
+	}
+	if modelStats != nil {
+		resp["model_stats"] = modelStats
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
 func (h *GatewayHandler) usageQuotaLimited(c *gin.Context, ctx context.Context, apiKey *service.APIKey, usageData gin.H, modelStats any) {
 	resp := gin.H{
 		"mode":    "quota_limited",
@@ -1786,6 +1882,9 @@ func billingErrorDetails(err error) (status int, code, message string, retryAfte
 		msg := pkgerrors.Message(err)
 		retrySeconds := 60 - int(time.Now().Unix()%60)
 		return http.StatusTooManyRequests, "rate_limit_exceeded", msg, retrySeconds
+	}
+	if errors.Is(err, service.ErrQuotaShare5hExceeded) || errors.Is(err, service.ErrQuotaShare7dExceeded) {
+		return http.StatusTooManyRequests, "quota_share_exceeded", err.Error(), 0
 	}
 	msg := pkgerrors.Message(err)
 	if msg == "" {

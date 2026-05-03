@@ -84,6 +84,29 @@ func NewOpenAIGatewayHandler(
 	}
 }
 
+func (h *OpenAIGatewayHandler) resolveActiveAPIKeyAfterBillingError(
+	ctx context.Context,
+	apiKey *service.APIKey,
+	subscription *service.UserSubscription,
+	billingErr error,
+) (*service.APIKey, *service.UserSubscription, *int64, error) {
+	if h.apiKeyService == nil {
+		return apiKey, subscription, nil, billingErr
+	}
+	resolution, err := h.apiKeyService.ResolveQuotaShareOverflow(ctx, apiKey, billingErr)
+	if err != nil {
+		return apiKey, subscription, nil, err
+	}
+	if resolution == nil || !resolution.Overflowed || resolution.ActiveAPIKey == nil {
+		return apiKey, subscription, nil, billingErr
+	}
+	activeAPIKey := resolution.ActiveAPIKey
+	if err := h.billingCacheService.CheckBillingEligibility(ctx, activeAPIKey.User, activeAPIKey, activeAPIKey.Group, nil); err != nil {
+		return activeAPIKey, nil, resolution.OverflowedFromGroupID, err
+	}
+	return activeAPIKey, nil, resolution.OverflowedFromGroupID, nil
+}
+
 // Responses handles OpenAI Responses API endpoint
 // POST /openai/v1/responses
 func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
@@ -197,9 +220,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	setOpsRequestContext(c, reqModel, reqStream, body)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
 
-	// 解析渠道级模型映射
-	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
-
 	// 提前校验 function_call_output 是否具备可关联上下文，避免上游 400。
 	if !h.validateFunctionCallOutputRequest(c, body, reqLog) {
 		return
@@ -225,16 +245,33 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		defer userReleaseFunc()
 	}
 
+	activeAPIKey := apiKey
+	activeSubscription := subscription
+	var overflowedFromGroupID *int64
+
 	// 2. Re-check billing eligibility after wait
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription); err != nil {
-		reqLog.Info("openai.billing_eligibility_check_failed", zap.Error(err))
-		status, code, message, retryAfter := billingErrorDetails(err)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
+	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), activeAPIKey.User, activeAPIKey, activeAPIKey.Group, activeSubscription); err != nil {
+		var resolveErr error
+		activeAPIKey, activeSubscription, overflowedFromGroupID, resolveErr = h.resolveActiveAPIKeyAfterBillingError(c.Request.Context(), apiKey, subscription, err)
+		if resolveErr == nil && overflowedFromGroupID != nil {
+			reqLog.Info("openai.quota_share_overflow_selected",
+				zap.Int64("from_group_id", *overflowedFromGroupID),
+				zap.Int64p("to_group_id", activeAPIKey.GroupID),
+			)
 		}
-		h.handleStreamingAwareError(c, status, code, message, streamStarted)
-		return
+		if resolveErr != nil {
+			reqLog.Info("openai.billing_eligibility_check_failed", zap.Error(resolveErr))
+			status, code, message, retryAfter := billingErrorDetails(resolveErr)
+			if retryAfter > 0 {
+				c.Header("Retry-After", strconv.Itoa(retryAfter))
+			}
+			h.handleStreamingAwareError(c, status, code, message, streamStarted)
+			return
+		}
 	}
+
+	// 解析渠道级模型映射
+	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), activeAPIKey.GroupID, reqModel)
 
 	// Generate session hash (header first; fallback to prompt_cache_key)
 	sessionHash := h.gatewayService.GenerateSessionHash(c, sessionHashBody)
@@ -251,7 +288,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		reqLog.Debug("openai.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
 		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithScheduler(
 			c.Request.Context(),
-			apiKey.GroupID,
+			activeAPIKey.GroupID,
 			previousResponseID,
 			sessionHash,
 			reqModel,
@@ -300,7 +337,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		reqLog.Debug("openai.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
-		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
+		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, activeAPIKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
 		if !acquired {
 			return
 		}
@@ -397,18 +434,19 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		// 使用量记录通过有界 worker 池提交，避免请求热路径创建无界 goroutine。
 		h.submitUsageRecordTask(func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-				Result:             result,
-				APIKey:             apiKey,
-				User:               apiKey.User,
-				Account:            account,
-				Subscription:       subscription,
-				InboundEndpoint:    GetInboundEndpoint(c),
-				UpstreamEndpoint:   GetUpstreamEndpoint(c, account.Platform),
-				UserAgent:          userAgent,
-				IPAddress:          clientIP,
-				RequestPayloadHash: requestPayloadHash,
-				APIKeyService:      h.apiKeyService,
-				ChannelUsageFields: channelMapping.ToUsageFields(reqModel, result.UpstreamModel),
+				Result:                result,
+				APIKey:                activeAPIKey,
+				User:                  activeAPIKey.User,
+				Account:               account,
+				Subscription:          activeSubscription,
+				InboundEndpoint:       GetInboundEndpoint(c),
+				UpstreamEndpoint:      GetUpstreamEndpoint(c, account.Platform),
+				UserAgent:             userAgent,
+				IPAddress:             clientIP,
+				RequestPayloadHash:    requestPayloadHash,
+				OverflowedFromGroupID: overflowedFromGroupID,
+				APIKeyService:         h.apiKeyService,
+				ChannelUsageFields:    channelMapping.ToUsageFields(reqModel, result.UpstreamModel),
 			}); err != nil {
 				logger.L().With(
 					zap.String("component", "handler.openai_gateway.responses"),
@@ -572,16 +610,12 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	}
 	reqModel := modelResult.String()
 	routingModel := service.NormalizeOpenAICompatRequestedModel(reqModel)
-	preferredMappedModel := resolveOpenAIMessagesDispatchMappedModel(apiKey, reqModel)
 	reqStream := gjson.GetBytes(body, "stream").Bool()
 
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
 
 	setOpsRequestContext(c, reqModel, reqStream, body)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
-
-	// 解析渠道级模型映射
-	channelMappingMsg, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
 
 	// 绑定错误透传服务，允许 service 层在非 failover 错误场景复用规则。
 	if h.errorPassthroughService != nil {
@@ -601,15 +635,33 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		defer userReleaseFunc()
 	}
 
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription); err != nil {
-		reqLog.Info("openai_messages.billing_eligibility_check_failed", zap.Error(err))
-		status, code, message, retryAfter := billingErrorDetails(err)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
+	activeAPIKey := apiKey
+	activeSubscription := subscription
+	var overflowedFromGroupID *int64
+
+	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), activeAPIKey.User, activeAPIKey, activeAPIKey.Group, activeSubscription); err != nil {
+		var resolveErr error
+		activeAPIKey, activeSubscription, overflowedFromGroupID, resolveErr = h.resolveActiveAPIKeyAfterBillingError(c.Request.Context(), apiKey, subscription, err)
+		if resolveErr == nil && overflowedFromGroupID != nil {
+			reqLog.Info("openai_messages.quota_share_overflow_selected",
+				zap.Int64("from_group_id", *overflowedFromGroupID),
+				zap.Int64p("to_group_id", activeAPIKey.GroupID),
+			)
 		}
-		h.anthropicStreamingAwareError(c, status, code, message, streamStarted)
-		return
+		if resolveErr != nil {
+			reqLog.Info("openai_messages.billing_eligibility_check_failed", zap.Error(resolveErr))
+			status, code, message, retryAfter := billingErrorDetails(resolveErr)
+			if retryAfter > 0 {
+				c.Header("Retry-After", strconv.Itoa(retryAfter))
+			}
+			h.anthropicStreamingAwareError(c, status, code, message, streamStarted)
+			return
+		}
 	}
+
+	// 解析渠道级模型映射
+	channelMappingMsg, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), activeAPIKey.GroupID, reqModel)
+	preferredMappedModel := resolveOpenAIMessagesDispatchMappedModel(activeAPIKey, reqModel)
 
 	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)
@@ -644,7 +696,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		reqLog.Debug("openai_messages.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
 		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithScheduler(
 			c.Request.Context(),
-			apiKey.GroupID,
+			activeAPIKey.GroupID,
 			"", // no previous_response_id
 			sessionHash,
 			currentRoutingModel,
@@ -681,7 +733,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		_ = scheduleDecision
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
-		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
+		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, activeAPIKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
 		if !acquired {
 			return
 		}
@@ -770,18 +822,19 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 
 		h.submitUsageRecordTask(func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-				Result:             result,
-				APIKey:             apiKey,
-				User:               apiKey.User,
-				Account:            account,
-				Subscription:       subscription,
-				InboundEndpoint:    GetInboundEndpoint(c),
-				UpstreamEndpoint:   GetUpstreamEndpoint(c, account.Platform),
-				UserAgent:          userAgent,
-				IPAddress:          clientIP,
-				RequestPayloadHash: requestPayloadHash,
-				APIKeyService:      h.apiKeyService,
-				ChannelUsageFields: channelMappingMsg.ToUsageFields(reqModel, result.UpstreamModel),
+				Result:                result,
+				APIKey:                activeAPIKey,
+				User:                  activeAPIKey.User,
+				Account:               account,
+				Subscription:          activeSubscription,
+				InboundEndpoint:       GetInboundEndpoint(c),
+				UpstreamEndpoint:      GetUpstreamEndpoint(c, account.Platform),
+				UserAgent:             userAgent,
+				IPAddress:             clientIP,
+				RequestPayloadHash:    requestPayloadHash,
+				OverflowedFromGroupID: overflowedFromGroupID,
+				APIKeyService:         h.apiKeyService,
+				ChannelUsageFields:    channelMappingMsg.ToUsageFields(reqModel, result.UpstreamModel),
 			}); err != nil {
 				logger.L().With(
 					zap.String("component", "handler.openai_gateway.messages"),
@@ -1124,9 +1177,6 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	setOpsRequestContext(c, reqModel, true, firstMessage)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeWSV2))
 
-	// 解析渠道级模型映射
-	channelMappingWS, _ := h.gatewayService.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, reqModel)
-
 	var currentUserRelease func()
 	var currentAccountRelease func()
 	releaseTurnSlots := func() {
@@ -1155,20 +1205,36 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	currentUserRelease = wrapReleaseOnDone(ctx, userReleaseFunc)
 
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
-	if err := h.billingCacheService.CheckBillingEligibility(ctx, apiKey.User, apiKey, apiKey.Group, subscription); err != nil {
-		reqLog.Info("openai.websocket_billing_eligibility_check_failed", zap.Error(err))
-		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "billing check failed")
-		return
+	activeAPIKey := apiKey
+	activeSubscription := subscription
+	var overflowedFromGroupID *int64
+	if err := h.billingCacheService.CheckBillingEligibility(ctx, activeAPIKey.User, activeAPIKey, activeAPIKey.Group, activeSubscription); err != nil {
+		var resolveErr error
+		activeAPIKey, activeSubscription, overflowedFromGroupID, resolveErr = h.resolveActiveAPIKeyAfterBillingError(ctx, apiKey, subscription, err)
+		if resolveErr == nil && overflowedFromGroupID != nil {
+			reqLog.Info("openai.websocket_quota_share_overflow_selected",
+				zap.Int64("from_group_id", *overflowedFromGroupID),
+				zap.Int64p("to_group_id", activeAPIKey.GroupID),
+			)
+		}
+		if resolveErr != nil {
+			reqLog.Info("openai.websocket_billing_eligibility_check_failed", zap.Error(resolveErr))
+			closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "billing check failed")
+			return
+		}
 	}
+
+	// 解析渠道级模型映射
+	channelMappingWS, _ := h.gatewayService.ResolveChannelMappingAndRestrict(ctx, activeAPIKey.GroupID, reqModel)
 
 	sessionHash := h.gatewayService.GenerateSessionHashWithFallback(
 		c,
 		firstMessage,
-		openAIWSIngressFallbackSessionSeed(subject.UserID, apiKey.ID, apiKey.GroupID),
+		openAIWSIngressFallbackSessionSeed(subject.UserID, activeAPIKey.ID, activeAPIKey.GroupID),
 	)
 	selection, scheduleDecision, err := h.gatewayService.SelectAccountWithScheduler(
 		ctx,
-		apiKey.GroupID,
+		activeAPIKey.GroupID,
 		previousResponseID,
 		sessionHash,
 		reqModel,
@@ -1214,7 +1280,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		accountReleaseFunc = fastReleaseFunc
 	}
 	currentAccountRelease = wrapReleaseOnDone(ctx, accountReleaseFunc)
-	if err := h.gatewayService.BindStickySession(ctx, apiKey.GroupID, sessionHash, account.ID); err != nil {
+	if err := h.gatewayService.BindStickySession(ctx, activeAPIKey.GroupID, sessionHash, account.ID); err != nil {
 		reqLog.Warn("openai.websocket_bind_sticky_session_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 	}
 
@@ -1275,18 +1341,19 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, result.FirstTokenMs)
 			h.submitUsageRecordTask(func(taskCtx context.Context) {
 				if err := h.gatewayService.RecordUsage(taskCtx, &service.OpenAIRecordUsageInput{
-					Result:             result,
-					APIKey:             apiKey,
-					User:               apiKey.User,
-					Account:            account,
-					Subscription:       subscription,
-					InboundEndpoint:    GetInboundEndpoint(c),
-					UpstreamEndpoint:   GetUpstreamEndpoint(c, account.Platform),
-					UserAgent:          userAgent,
-					IPAddress:          clientIP,
-					RequestPayloadHash: service.HashUsageRequestPayload(firstMessage),
-					APIKeyService:      h.apiKeyService,
-					ChannelUsageFields: channelMappingWS.ToUsageFields(reqModel, result.UpstreamModel),
+					Result:                result,
+					APIKey:                activeAPIKey,
+					User:                  activeAPIKey.User,
+					Account:               account,
+					Subscription:          activeSubscription,
+					InboundEndpoint:       GetInboundEndpoint(c),
+					UpstreamEndpoint:      GetUpstreamEndpoint(c, account.Platform),
+					UserAgent:             userAgent,
+					IPAddress:             clientIP,
+					RequestPayloadHash:    service.HashUsageRequestPayload(firstMessage),
+					OverflowedFromGroupID: overflowedFromGroupID,
+					APIKeyService:         h.apiKeyService,
+					ChannelUsageFields:    channelMappingWS.ToUsageFields(reqModel, result.UpstreamModel),
 				}); err != nil {
 					reqLog.Error("openai.websocket_record_usage_failed",
 						zap.Int64("account_id", account.ID),

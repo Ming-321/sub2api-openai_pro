@@ -605,5 +605,19 @@ func (s *stubAdminService) ReplaceUserGroup(ctx context.Context, userID, oldGrou
 	return &service.ReplaceUserGroupResult{MigratedKeys: 0}, nil
 }
 
+func (s *stubAdminService) SetQuotaShareService(qs *service.QuotaShareService) {}
+
+func (s *stubAdminService) GetQuotaShareStatus(ctx context.Context, groupID int64) (*service.QuotaShareStatusResponse, error) {
+	return nil, nil
+}
+
+func (s *stubAdminService) AdminUpdateAPIKeyQuotaWeight(ctx context.Context, keyID int64, weight int) (*service.APIKey, error) {
+	return &service.APIKey{ID: keyID, QuotaWeight: weight}, nil
+}
+
+func (s *stubAdminService) AdminUpdateAPIKeyQuotaShareOverflowGroupID(ctx context.Context, keyID int64, groupID *int64) (*service.APIKey, error) {
+	return &service.APIKey{ID: keyID, QuotaShareOverflowGroupID: groupID}, nil
+}
+
 // Ensure stub implements interface.
 var _ service.AdminService = (*stubAdminService)(nil)

@@ -139,6 +139,7 @@ export default {
     cost: 'Cost',
     // Status
     quotaMode: 'Key Quota Mode',
+    quotaShareMode: 'Quota Share Mode',
     walletBalance: 'Wallet Balance',
     // Ring card titles
     totalQuota: 'Total Quota',
@@ -153,6 +154,9 @@ export default {
     todayExpires: '(expires today)',
     daysLeft: '({days} days)',
     usedQuota: 'Used Quota',
+    quotaShareWeight: 'Current Weight',
+    upstream5hUsage: 'Upstream 5h Used',
+    upstream7dUsage: 'Upstream 7d Used',
     resetNow: 'Resetting soon',
     subscriptionType: 'Subscription Type',
     subscriptionExpires: 'Subscription Expires',
@@ -610,7 +614,8 @@ export default {
 
   // Groups (shared)
   groups: {
-    subscription: 'Sub'
+    subscription: 'Sub',
+    quotaShare: 'Share'
   },
 
   // API Keys
@@ -1950,6 +1955,7 @@ export default {
       rateMultipliers: 'Rate Multipliers',
       rateMultipliersTitle: 'Group Rate Multipliers',
       addUserRate: 'Add User Rate Multiplier',
+      quotaShareStatus: 'Share Status',
       rpmOverrides: 'RPM Overrides',
       rpmOverridesTitle: 'Group RPM Overrides',
       addUserRpm: 'Add User RPM Override',
@@ -1992,9 +1998,16 @@ export default {
         typeNotEditable: 'Billing type cannot be changed after group creation.',
         standard: 'Standard (Balance)',
         subscription: 'Subscription (Quota)',
+        quotaShare: 'Quota Share',
         dailyLimit: 'Daily Limit (USD)',
         weeklyLimit: 'Weekly Limit (USD)',
         monthlyLimit: 'Monthly Limit (USD)',
+        estimated5h: 'Estimated 5h Total (USD)',
+        estimated7d: 'Estimated 7d Total (USD)',
+        estimated5hShort: '5h',
+        estimated7dShort: '7d',
+        quotaShareHint:
+          'Split one upstream account quota across multiple downstream keys by weight. Fill the initial 5-hour and 7-day estimates here; the backend will calibrate them gradually from upstream headers.',
         defaultValidityDays: 'Default Validity (Days)',
         validityHint: 'Number of days the subscription is valid when assigned to a user',
         noLimit: 'No limit'

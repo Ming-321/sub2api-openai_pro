@@ -150,6 +150,20 @@ func (Group) Fields() []ent.Field {
 		field.Int("rpm_limit").
 			Default(0).
 			Comment("分组 RPM 上限，0 表示不限制；设置后接管该分组用户的限流"),
+
+		// ========== Quota Share fields ==========
+		field.Float("estimated_5h_limit_usd").
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).
+			Default(0).
+			Comment("Estimated upstream 5h window limit in USD (quota_share mode)"),
+		field.Float("estimated_7d_limit_usd").
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).
+			Default(0).
+			Comment("Estimated upstream 7d window limit in USD (quota_share mode)"),
+		field.JSON("calibration_state", &domain.QuotaShareCalibrationState{}).
+			Optional().
+			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
+			Comment("EMA calibration state for quota_share estimated limits"),
 	}
 }
 

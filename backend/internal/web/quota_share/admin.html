@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quota Share 管理面板</title>
+<link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+<style>
+  body{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#e2e8f0}
+  .card{background:#1e293b;border:1px solid #334155;border-radius:.75rem;padding:1.25rem}
+  .bar-bg{background:#334155;border-radius:9999px;height:.5rem}
+  .bar-fill{border-radius:9999px;height:.5rem;transition:width .4s}
+  .bar-ok{background:linear-gradient(90deg,#22d3ee,#3b82f6)}
+  .bar-warn{background:linear-gradient(90deg,#facc15,#f97316)}
+  .bar-danger{background:linear-gradient(90deg,#f97316,#ef4444)}
+  .badge{display:inline-block;padding:.125rem .5rem;border-radius:9999px;font-size:.65rem;font-weight:600}
+  input:focus,select:focus{outline:none;box-shadow:0 0 0 2px #3b82f6}
+  table{width:100%;border-collapse:collapse}th,td{padding:.5rem .75rem;text-align:left;font-size:.8rem}
+  th{color:#94a3b8;font-weight:500;border-bottom:1px solid #334155}td{border-bottom:1px solid #1e293b}
+</style>
+</head>
+<body class="min-h-screen p-4 md:p-8">
+<div class="max-w-5xl mx-auto space-y-6">
+  <h1 class="text-xl font-bold text-white">Quota Share 管理面板</h1>
+
+  <!-- Login -->
+  <div id="loginSection" class="card max-w-md">
+    <p class="text-sm text-gray-400 mb-3">使用管理员账号登录</p>
+    <div class="space-y-2">
+      <input id="email" type="text" placeholder="邮箱" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white">
+      <input id="password" type="password" placeholder="密码" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white">
+      <button onclick="login()" class="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg w-full">登录</button>
+    </div>
+    <div id="loginError" class="text-red-400 text-xs mt-2 hidden"></div>
+  </div>
+
+  <!-- Dashboard (hidden until login) -->
+  <div id="dashboard" class="hidden space-y-6">
+    <div class="flex gap-3 items-center">
+      <select id="groupSelect" onchange="loadGroupStatus()" class="bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white"></select>
+      <button onclick="loadGroupStatus()" class="bg-gray-700 hover:bg-gray-600 text-white text-xs px-3 py-2 rounded-lg">刷新</button>
+      <span id="lastUpdate" class="text-xs text-gray-500 ml-auto"></span>
+    </div>
+
+    <!-- Global Window Status -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="card" id="window5h"><p class="text-xs text-gray-500">5h 窗口</p><p class="text-gray-600 text-sm mt-2">加载中…</p></div>
+      <div class="card" id="window7d"><p class="text-xs text-gray-500">7d 窗口</p><p class="text-gray-600 text-sm mt-2">加载中…</p></div>
+    </div>
+
+    <!-- Calibration -->
+    <div class="card" id="calibration"><p class="text-xs text-gray-500">校准状态</p><p class="text-gray-600 text-sm mt-2">加载中…</p></div>
+
+    <!-- Per-Key Usage Table -->
+    <div class="card overflow-x-auto">
+      <p class="text-xs text-gray-500 mb-3">各 Key 用量</p>
+      <table><thead><tr><th>Key 名称</th><th>权重</th><th>5h 已用</th><th>5h 限额</th><th>7d 已用</th><th>7d 限额</th><th>状态</th></tr></thead>
+      <tbody id="keyTable"><tr><td colspan="7" class="text-gray-600">加载中…</td></tr></tbody></table>
+    </div>
+  </div>
+</div>
+
+<script>
+let jwt='';
+const API='/api/v1';
+const $=id=>document.getElementById(id);
+
+async function api(path,opts={}){
+  const h={'Content-Type':'application/json'};
+  if(jwt)h['Authorization']='Bearer '+jwt;
+  const r=await fetch(API+path,{...opts,headers:{...h,...(opts.headers||{})}});
+  if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error?.message||e.message||r.statusText)}
+  return r.json();
+}
+
+async function login(){
+  try{
+    const d=await api('/auth/login',{method:'POST',body:JSON.stringify({email:$('email').value,password:$('password').value})});
+    jwt=d.data?.token||d.token;
+    if(!jwt)throw new Error('未获取到 token');
+    localStorage.setItem('qs_jwt',jwt);
+    $('loginSection').classList.add('hidden');
+    $('dashboard').classList.remove('hidden');
+    await loadGroups();
+  }catch(e){$('loginError').textContent=e.message;$('loginError').classList.remove('hidden')}
+}
+
+async function loadGroups(){
+  const d=await api('/admin/groups?page=1&page_size=100');
+  const groups=(d.data?.items||d.data||[]).filter(g=>g.subscription_type==='quota_share');
+  const sel=$('groupSelect');
+  sel.innerHTML='';
+  if(!groups.length){sel.innerHTML='<option>无 quota_share 分组</option>';return}
+  groups.forEach(g=>{const o=document.createElement('option');o.value=g.id;o.textContent=g.name+' (ID:'+g.id+')';sel.appendChild(o)});
+  loadGroupStatus();
+}
+
+async function loadGroupStatus(){
+  const gid=$('groupSelect').value;
+  if(!gid)return;
+  try{
+    const [groupData,statusData]=await Promise.all([
+      api('/admin/groups/'+gid),
+      api('/admin/groups/'+gid+'/quota-share-status')
+    ]);
+    const g=groupData.data||groupData;
+    const st=statusData.data||statusData;
+    renderWindows(st.group_state,g);
+    renderCalibration(g);
+    renderKeys(st);
+    $('lastUpdate').textContent='更新于 '+new Date().toLocaleTimeString();
+  }catch(e){console.error(e)}
+}
+
+function fmtTime(unix){
+  if(!unix)return '—';
+  return new Date(unix*1000).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+}
+
+function renderWindows(state,g){
+  const e5h=state?.e5||g.estimated_5h_limit_usd||0;
+  const e7d=state?.e7||g.estimated_7d_limit_usd||0;
+  const pct5h=(state?.u5p||0).toFixed(1);
+  const pct7d=(state?.u7p||0).toFixed(1);
+  $('window5h').innerHTML=`<p class="text-xs text-gray-500 mb-2">5 小时窗口</p>
+    <p class="text-2xl font-bold text-white">$${e5h.toFixed(2)}</p>
+    <p class="text-xs text-gray-400">估算总额 · 上游已用 ${pct5h}%</p>
+    <p class="text-xs text-gray-500 mt-1">${fmtTime(state?.w5s)} → ${fmtTime(state?.w5e)}</p>`;
+  $('window7d').innerHTML=`<p class="text-xs text-gray-500 mb-2">7 天窗口</p>
+    <p class="text-2xl font-bold text-white">$${e7d.toFixed(2)}</p>
+    <p class="text-xs text-gray-400">估算总额 · 上游已用 ${pct7d}%</p>
+    <p class="text-xs text-gray-500 mt-1">${fmtTime(state?.w7s)} → ${fmtTime(state?.w7e)}</p>`;
+}
+
+function renderCalibration(g){
+  const cal=g.calibration_state;
+  if(!cal){$('calibration').innerHTML='<p class="text-xs text-gray-500">校准状态</p><p class="text-sm text-gray-400 mt-1">尚未校准</p>';return}
+  const w5=cal['5h']||cal.window_5h||{};
+  const w7=cal['7d']||cal.window_7d||{};
+  $('calibration').innerHTML=`<p class="text-xs text-gray-500 mb-2">校准状态</p>
+    <div class="grid grid-cols-2 gap-4 text-sm">
+      <div><span class="text-gray-400">5h 校准次数:</span> <span class="text-white">${w5.calibration_count||0}</span></div>
+      <div><span class="text-gray-400">7d 校准次数:</span> <span class="text-white">${w7.calibration_count||0}</span></div>
+      <div><span class="text-gray-400">5h 当前估算:</span> <span class="text-white">$${(w5.current_estimate_usd||0).toFixed(2)}</span></div>
+      <div><span class="text-gray-400">7d 当前估算:</span> <span class="text-white">$${(w7.current_estimate_usd||0).toFixed(2)}</span></div>
+    </div>`;
+}
+
+function barClass(pct){return pct<70?'bar-ok':pct<90?'bar-warn':'bar-danger'}
+
+function renderKeys(st){
+  const keys=st.keys||[];
+  const totalW=st.total_weight||0;
+  const tb=$('keyTable');
+  if(!keys.length){tb.innerHTML='<tr><td colspan="7" class="text-gray-500">无 API Key</td></tr>';return}
+  tb.innerHTML=keys.map(k=>{
+    const ratio=totalW>0?k.quota_weight/totalW:0;
+    const pct5=k.limit_5h>0?(k.usage_5h/k.limit_5h*100):0;
+    const pct7=k.limit_7d>0?(k.usage_7d/k.limit_7d*100):0;
+    return `<tr>
+      <td class="text-white font-mono text-xs">${k.key_name||'—'}</td>
+      <td>${k.quota_weight} <span class="text-gray-500">(${(ratio*100).toFixed(0)}%)</span></td>
+      <td>$${k.usage_5h.toFixed(2)} <div class="bar-bg mt-1"><div class="bar-fill ${barClass(pct5)}" style="width:${Math.min(pct5,100)}%"></div></div></td>
+      <td>$${k.limit_5h.toFixed(2)}</td>
+      <td>$${k.usage_7d.toFixed(2)} <div class="bar-bg mt-1"><div class="bar-fill ${barClass(pct7)}" style="width:${Math.min(pct7,100)}%"></div></div></td>
+      <td>$${k.limit_7d.toFixed(2)}</td>
+      <td><span class="badge ${k.status==='active'?'bg-green-900 text-green-300':'bg-red-900 text-red-300'}">${k.status}</span></td>
+    </tr>`}).join('');
+}
+
+// Auto-login with saved JWT
+(async()=>{
+  jwt=localStorage.getItem('qs_jwt');
+  if(jwt){
+    try{await api('/admin/groups?page=1&page_size=1');
+      $('loginSection').classList.add('hidden');$('dashboard').classList.remove('hidden');await loadGroups();
+    }catch(e){jwt='';localStorage.removeItem('qs_jwt')}
+  }
+})();
+</script>
+</body>
+</html>

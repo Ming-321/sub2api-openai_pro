@@ -508,6 +508,21 @@ const statusInfo = computed(() => {
   const data = resultData.value
   if (!data) return null
 
+  if (data.mode === 'quota_share') {
+    const isValid = data.isValid !== false
+    const statusMap: Record<string, string> = {
+      active: 'Active',
+      inactive: 'Inactive',
+      quota_exhausted: 'Quota Exhausted',
+      expired: 'Expired',
+    }
+    return {
+      label: t('keyUsage.quotaShareMode'),
+      statusText: statusMap[data.status] || data.status || 'Unknown',
+      isActive: isValid && data.status === 'active',
+    }
+  }
+
   if (data.mode === 'quota_limited') {
     const isValid = data.isValid !== false
     const statusMap: Record<string, string> = {
@@ -535,7 +550,7 @@ const ringItems = computed<RingItem[]>(() => {
 
   const items: RingItem[] = []
 
-  if (data.mode === 'quota_limited') {
+  if (data.mode === 'quota_share' || data.mode === 'quota_limited') {
     if (data.quota) {
       const pct = data.quota.limit > 0 ? Math.min(Math.round((data.quota.used / data.quota.limit) * 100), 100) : 0
       items.push({ title: t('keyUsage.totalQuota'), pct, amount: `${usd(data.quota.used)} / ${usd(data.quota.limit)}`, iconType: 'dollar' })
@@ -609,7 +624,7 @@ const detailRows = computed<DetailRow[]>(() => {
   const ICON_DOLLAR = '<line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>'
   const ICON_CHECK = '<polyline points="20 6 9 17 4 12"/>'
 
-  if (data.mode === 'quota_limited') {
+  if (data.mode === 'quota_share' || data.mode === 'quota_limited') {
     if (data.quota) {
       const remainColor = data.quota.remaining <= 0 ? 'text-rose-500'
         : data.quota.remaining < data.quota.limit * 0.1 ? 'text-amber-500'
@@ -644,6 +659,65 @@ const detailRows = computed<DetailRow[]>(() => {
           label: `${t('keyUsage.usedQuota')} (${windowMap[rl.window] || rl.window})`,
           value: valueStr,
           valueClass: getUsageColor(pct),
+        })
+      }
+    }
+    if (data.mode === 'quota_share') {
+      rows.push({
+        iconBg: 'bg-violet-500/10', iconColor: 'text-violet-500', iconSvg: ICON_SHIELD,
+        label: t('keyUsage.quotaShareWeight'),
+        value: String(data.weight || 1),
+        valueClass: '',
+      })
+      if (data.overflow) {
+        const overflow = data.overflow
+        const overflowLabel = locale.value === 'zh' ? '个人兜底分组' : 'Overflow group'
+        const reasonLabels: Record<string, string> = locale.value === 'zh'
+          ? {
+              not_configured: '未配置，共享额度用完后返回 429',
+              available: '可用',
+              group_not_found: '分组不存在',
+              group_unavailable: '分组不可用',
+              balance_insufficient: '余额不足',
+              api_key_expired: 'Key 已过期',
+              api_key_quota_exhausted: 'Key 总额度已用完',
+              resolver_unavailable: '状态暂不可查',
+            }
+          : {
+              not_configured: 'Not configured; returns 429 after shared quota is exhausted',
+              available: 'Available',
+              group_not_found: 'Group not found',
+              group_unavailable: 'Group unavailable',
+              balance_insufficient: 'Insufficient balance',
+              api_key_expired: 'Key expired',
+              api_key_quota_exhausted: 'Key quota exhausted',
+              resolver_unavailable: 'Status unavailable',
+            }
+        const groupName = overflow.group_name || (locale.value === 'zh' ? '未配置' : 'Not configured')
+        const reason = reasonLabels[overflow.reason] || overflow.reason || ''
+        rows.push({
+          iconBg: overflow.available ? 'bg-emerald-500/10' : 'bg-amber-500/10',
+          iconColor: overflow.available ? 'text-emerald-500' : 'text-amber-500',
+          iconSvg: ICON_CHECK,
+          label: overflowLabel,
+          value: overflow.configured ? `${groupName} · ${reason}` : reason,
+          valueClass: overflow.available ? 'text-emerald-500' : 'text-amber-500',
+        })
+      }
+      if (data.upstream?.used_5h_pct != null) {
+        rows.push({
+          iconBg: 'bg-cyan-500/10', iconColor: 'text-cyan-500', iconSvg: ICON_DOLLAR,
+          label: t('keyUsage.upstream5hUsage'),
+          value: `${Number(data.upstream.used_5h_pct).toFixed(1)}%`,
+          valueClass: getUsageColor(Number(data.upstream.used_5h_pct)),
+        })
+      }
+      if (data.upstream?.used_7d_pct != null) {
+        rows.push({
+          iconBg: 'bg-indigo-500/10', iconColor: 'text-indigo-500', iconSvg: ICON_DOLLAR,
+          label: t('keyUsage.upstream7dUsage'),
+          value: `${Number(data.upstream.used_7d_pct).toFixed(1)}%`,
+          valueClass: getUsageColor(Number(data.upstream.used_7d_pct)),
         })
       }
     }

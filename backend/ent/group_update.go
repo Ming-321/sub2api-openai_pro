@@ -588,6 +588,60 @@ func (_u *GroupUpdate) AddRpmLimit(v int) *GroupUpdate {
 	return _u
 }
 
+// SetEstimated5hLimitUsd sets the "estimated_5h_limit_usd" field.
+func (_u *GroupUpdate) SetEstimated5hLimitUsd(v float64) *GroupUpdate {
+	_u.mutation.ResetEstimated5hLimitUsd()
+	_u.mutation.SetEstimated5hLimitUsd(v)
+	return _u
+}
+
+// SetNillableEstimated5hLimitUsd sets the "estimated_5h_limit_usd" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableEstimated5hLimitUsd(v *float64) *GroupUpdate {
+	if v != nil {
+		_u.SetEstimated5hLimitUsd(*v)
+	}
+	return _u
+}
+
+// AddEstimated5hLimitUsd adds value to the "estimated_5h_limit_usd" field.
+func (_u *GroupUpdate) AddEstimated5hLimitUsd(v float64) *GroupUpdate {
+	_u.mutation.AddEstimated5hLimitUsd(v)
+	return _u
+}
+
+// SetEstimated7dLimitUsd sets the "estimated_7d_limit_usd" field.
+func (_u *GroupUpdate) SetEstimated7dLimitUsd(v float64) *GroupUpdate {
+	_u.mutation.ResetEstimated7dLimitUsd()
+	_u.mutation.SetEstimated7dLimitUsd(v)
+	return _u
+}
+
+// SetNillableEstimated7dLimitUsd sets the "estimated_7d_limit_usd" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableEstimated7dLimitUsd(v *float64) *GroupUpdate {
+	if v != nil {
+		_u.SetEstimated7dLimitUsd(*v)
+	}
+	return _u
+}
+
+// AddEstimated7dLimitUsd adds value to the "estimated_7d_limit_usd" field.
+func (_u *GroupUpdate) AddEstimated7dLimitUsd(v float64) *GroupUpdate {
+	_u.mutation.AddEstimated7dLimitUsd(v)
+	return _u
+}
+
+// SetCalibrationState sets the "calibration_state" field.
+func (_u *GroupUpdate) SetCalibrationState(v *domain.QuotaShareCalibrationState) *GroupUpdate {
+	_u.mutation.SetCalibrationState(v)
+	return _u
+}
+
+// ClearCalibrationState clears the value of the "calibration_state" field.
+func (_u *GroupUpdate) ClearCalibrationState() *GroupUpdate {
+	_u.mutation.ClearCalibrationState()
+	return _u
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_u *GroupUpdate) AddAPIKeyIDs(ids ...int64) *GroupUpdate {
 	_u.mutation.AddAPIKeyIDs(ids...)
@@ -1056,6 +1110,24 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AddedRpmLimit(); ok {
 		_spec.AddField(group.FieldRpmLimit, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.Estimated5hLimitUsd(); ok {
+		_spec.SetField(group.FieldEstimated5hLimitUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedEstimated5hLimitUsd(); ok {
+		_spec.AddField(group.FieldEstimated5hLimitUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.Estimated7dLimitUsd(); ok {
+		_spec.SetField(group.FieldEstimated7dLimitUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedEstimated7dLimitUsd(); ok {
+		_spec.AddField(group.FieldEstimated7dLimitUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.CalibrationState(); ok {
+		_spec.SetField(group.FieldCalibrationState, field.TypeJSON, value)
+	}
+	if _u.mutation.CalibrationStateCleared() {
+		_spec.ClearField(group.FieldCalibrationState, field.TypeJSON)
 	}
 	if _u.mutation.APIKeysCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -1923,6 +1995,60 @@ func (_u *GroupUpdateOne) AddRpmLimit(v int) *GroupUpdateOne {
 	return _u
 }
 
+// SetEstimated5hLimitUsd sets the "estimated_5h_limit_usd" field.
+func (_u *GroupUpdateOne) SetEstimated5hLimitUsd(v float64) *GroupUpdateOne {
+	_u.mutation.ResetEstimated5hLimitUsd()
+	_u.mutation.SetEstimated5hLimitUsd(v)
+	return _u
+}
+
+// SetNillableEstimated5hLimitUsd sets the "estimated_5h_limit_usd" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableEstimated5hLimitUsd(v *float64) *GroupUpdateOne {
+	if v != nil {
+		_u.SetEstimated5hLimitUsd(*v)
+	}
+	return _u
+}
+
+// AddEstimated5hLimitUsd adds value to the "estimated_5h_limit_usd" field.
+func (_u *GroupUpdateOne) AddEstimated5hLimitUsd(v float64) *GroupUpdateOne {
+	_u.mutation.AddEstimated5hLimitUsd(v)
+	return _u
+}
+
+// SetEstimated7dLimitUsd sets the "estimated_7d_limit_usd" field.
+func (_u *GroupUpdateOne) SetEstimated7dLimitUsd(v float64) *GroupUpdateOne {
+	_u.mutation.ResetEstimated7dLimitUsd()
+	_u.mutation.SetEstimated7dLimitUsd(v)
+	return _u
+}
+
+// SetNillableEstimated7dLimitUsd sets the "estimated_7d_limit_usd" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableEstimated7dLimitUsd(v *float64) *GroupUpdateOne {
+	if v != nil {
+		_u.SetEstimated7dLimitUsd(*v)
+	}
+	return _u
+}
+
+// AddEstimated7dLimitUsd adds value to the "estimated_7d_limit_usd" field.
+func (_u *GroupUpdateOne) AddEstimated7dLimitUsd(v float64) *GroupUpdateOne {
+	_u.mutation.AddEstimated7dLimitUsd(v)
+	return _u
+}
+
+// SetCalibrationState sets the "calibration_state" field.
+func (_u *GroupUpdateOne) SetCalibrationState(v *domain.QuotaShareCalibrationState) *GroupUpdateOne {
+	_u.mutation.SetCalibrationState(v)
+	return _u
+}
+
+// ClearCalibrationState clears the value of the "calibration_state" field.
+func (_u *GroupUpdateOne) ClearCalibrationState() *GroupUpdateOne {
+	_u.mutation.ClearCalibrationState()
+	return _u
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_u *GroupUpdateOne) AddAPIKeyIDs(ids ...int64) *GroupUpdateOne {
 	_u.mutation.AddAPIKeyIDs(ids...)
@@ -2421,6 +2547,24 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if value, ok := _u.mutation.AddedRpmLimit(); ok {
 		_spec.AddField(group.FieldRpmLimit, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.Estimated5hLimitUsd(); ok {
+		_spec.SetField(group.FieldEstimated5hLimitUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedEstimated5hLimitUsd(); ok {
+		_spec.AddField(group.FieldEstimated5hLimitUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.Estimated7dLimitUsd(); ok {
+		_spec.SetField(group.FieldEstimated7dLimitUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedEstimated7dLimitUsd(); ok {
+		_spec.AddField(group.FieldEstimated7dLimitUsd, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.CalibrationState(); ok {
+		_spec.SetField(group.FieldCalibrationState, field.TypeJSON, value)
+	}
+	if _u.mutation.CalibrationStateCleared() {
+		_spec.ClearField(group.FieldCalibrationState, field.TypeJSON)
 	}
 	if _u.mutation.APIKeysCleared() {
 		edge := &sqlgraph.EdgeSpec{

@@ -78,6 +78,12 @@ const (
 	FieldMessagesDispatchModelConfig = "messages_dispatch_model_config"
 	// FieldRpmLimit holds the string denoting the rpm_limit field in the database.
 	FieldRpmLimit = "rpm_limit"
+	// FieldEstimated5hLimitUsd holds the string denoting the estimated_5h_limit_usd field in the database.
+	FieldEstimated5hLimitUsd = "estimated_5h_limit_usd"
+	// FieldEstimated7dLimitUsd holds the string denoting the estimated_7d_limit_usd field in the database.
+	FieldEstimated7dLimitUsd = "estimated_7d_limit_usd"
+	// FieldCalibrationState holds the string denoting the calibration_state field in the database.
+	FieldCalibrationState = "calibration_state"
 	// EdgeAPIKeys holds the string denoting the api_keys edge name in mutations.
 	EdgeAPIKeys = "api_keys"
 	// EdgeRedeemCodes holds the string denoting the redeem_codes edge name in mutations.
@@ -184,6 +190,9 @@ var Columns = []string{
 	FieldDefaultMappedModel,
 	FieldMessagesDispatchModelConfig,
 	FieldRpmLimit,
+	FieldEstimated5hLimitUsd,
+	FieldEstimated7dLimitUsd,
+	FieldCalibrationState,
 }
 
 var (
@@ -263,6 +272,10 @@ var (
 	DefaultMessagesDispatchModelConfig domain.OpenAIMessagesDispatchModelConfig
 	// DefaultRpmLimit holds the default value on creation for the "rpm_limit" field.
 	DefaultRpmLimit int
+	// DefaultEstimated5hLimitUsd holds the default value on creation for the "estimated_5h_limit_usd" field.
+	DefaultEstimated5hLimitUsd float64
+	// DefaultEstimated7dLimitUsd holds the default value on creation for the "estimated_7d_limit_usd" field.
+	DefaultEstimated7dLimitUsd float64
 )
 
 // OrderOption defines the ordering options for the Group queries.
@@ -411,6 +424,16 @@ func ByDefaultMappedModel(opts ...sql.OrderTermOption) OrderOption {
 // ByRpmLimit orders the results by the rpm_limit field.
 func ByRpmLimit(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldRpmLimit, opts...).ToFunc()
+}
+
+// ByEstimated5hLimitUsd orders the results by the estimated_5h_limit_usd field.
+func ByEstimated5hLimitUsd(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldEstimated5hLimitUsd, opts...).ToFunc()
+}
+
+// ByEstimated7dLimitUsd orders the results by the estimated_7d_limit_usd field.
+func ByEstimated7dLimitUsd(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldEstimated7dLimitUsd, opts...).ToFunc()
 }
 
 // ByAPIKeysCount orders the results by api_keys count.

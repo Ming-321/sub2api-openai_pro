@@ -60,9 +60,17 @@ type AdminService interface {
 	// API Key management (admin)
 	AdminUpdateAPIKeyGroupID(ctx context.Context, keyID int64, groupID *int64) (*AdminUpdateAPIKeyGroupIDResult, error)
 	AdminResetAPIKeyRateLimitUsage(ctx context.Context, keyID int64) (*APIKey, error)
+	AdminUpdateAPIKeyQuotaWeight(ctx context.Context, keyID int64, weight int) (*APIKey, error)
+	AdminUpdateAPIKeyQuotaShareOverflowGroupID(ctx context.Context, keyID int64, groupID *int64) (*APIKey, error)
 
 	// ReplaceUserGroup 替换用户的专属分组：授予新分组权限、迁移 Key、移除旧分组权限
 	ReplaceUserGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (*ReplaceUserGroupResult, error)
+
+	// SetQuotaShareService injects the QuotaShareService (late binding to avoid circular deps).
+	SetQuotaShareService(qs *QuotaShareService)
+
+	// GetQuotaShareStatus returns the real-time Redis state for a quota_share group.
+	GetQuotaShareStatus(ctx context.Context, groupID int64) (*QuotaShareStatusResponse, error)
 
 	// Account management
 	ListAccounts(ctx context.Context, page, pageSize int, platform, accountType, status, search string, groupID int64, privacyMode string, sortBy, sortOrder string) ([]Account, int64, error)
@@ -211,6 +219,9 @@ type CreateGroupInput struct {
 	RPMLimit int
 	// 从指定分组复制账号（创建分组后在同一事务内绑定）
 	CopyAccountsFromGroupIDs []int64
+	// Quota Share 估算限额
+	Estimated5hLimitUSD *float64
+	Estimated7dLimitUSD *float64
 }
 
 type UpdateGroupInput struct {
@@ -248,6 +259,9 @@ type UpdateGroupInput struct {
 	RPMLimit *int
 	// 从指定分组复制账号（同步操作：先清空当前分组的账号绑定，再绑定源分组的账号）
 	CopyAccountsFromGroupIDs []int64
+	// Quota Share 估算限额（nil = 不改动）
+	Estimated5hLimitUSD *float64
+	Estimated7dLimitUSD *float64
 }
 
 type CreateAccountInput struct {
@@ -522,6 +536,7 @@ type adminServiceImpl struct {
 	defaultSubAssigner   DefaultSubscriptionAssigner
 	userSubRepo          UserSubscriptionRepository
 	privacyClientFactory PrivacyClientFactory
+	quotaShareService    *QuotaShareService
 }
 
 type userGroupRateBatchReader interface {
@@ -566,6 +581,219 @@ func NewAdminService(
 		defaultSubAssigner:   defaultSubAssigner,
 		userSubRepo:          userSubRepo,
 		privacyClientFactory: privacyClientFactory,
+	}
+}
+
+// SetQuotaShareService injects the QuotaShareService after construction (breaks circular dependency).
+func (s *adminServiceImpl) SetQuotaShareService(qs *QuotaShareService) {
+	s.quotaShareService = qs
+}
+
+// QuotaShareKeyStatus holds the per-key quota_share status, with usage backed by usage_logs.
+type QuotaShareKeyStatus struct {
+	KeyID       int64   `json:"key_id"`
+	KeyName     string  `json:"key_name"`
+	Status      string  `json:"status"`
+	QuotaWeight int     `json:"quota_weight"`
+	Usage5h     float64 `json:"usage_5h"`
+	Usage7d     float64 `json:"usage_7d"`
+	Limit5h     float64 `json:"limit_5h"`
+	Limit7d     float64 `json:"limit_7d"`
+}
+
+// QuotaShareStatusResponse holds the real-time quota_share state, combining Redis window metadata and DB usage.
+type QuotaShareStatusResponse struct {
+	GroupState  *QuotaShareGroupState `json:"group_state"`
+	TotalWeight int                   `json:"total_weight"`
+	Keys        []QuotaShareKeyStatus `json:"keys"`
+}
+
+func (s *adminServiceImpl) GetQuotaShareStatus(ctx context.Context, groupID int64) (*QuotaShareStatusResponse, error) {
+	if s.quotaShareService == nil {
+		return nil, errors.New("quota_share service not available")
+	}
+
+	group, err := s.groupRepo.GetByID(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+	if !group.IsQuotaShareType() {
+		return nil, errors.New("group is not a quota_share type")
+	}
+
+	state, _ := s.quotaShareService.GetGroupState(ctx, groupID)
+
+	keys, _, err := s.apiKeyRepo.ListByGroupID(ctx, groupID, pagination.PaginationParams{Page: 1, PageSize: 200})
+	if err != nil {
+		return nil, fmt.Errorf("list group keys: %w", err)
+	}
+
+	totalWeight := 0
+	for _, k := range keys {
+		totalWeight += k.QuotaWeight
+	}
+
+	est5h, est7d := group.Estimated5hLimitUSD, group.Estimated7dLimitUSD
+	if state != nil {
+		if state.Estimated5hLimitUSD > 0 {
+			est5h = state.Estimated5hLimitUSD
+		}
+		if state.Estimated7dLimitUSD > 0 {
+			est7d = state.Estimated7dLimitUSD
+		}
+	}
+
+	keyStatuses := make([]QuotaShareKeyStatus, 0, len(keys))
+	for _, k := range keys {
+		ks := QuotaShareKeyStatus{
+			KeyID:       k.ID,
+			KeyName:     k.Name,
+			Status:      k.Status,
+			QuotaWeight: k.QuotaWeight,
+		}
+		if totalWeight > 0 {
+			ratio := float64(k.QuotaWeight) / float64(totalWeight)
+			ks.Limit5h = est5h * ratio
+			ks.Limit7d = est7d * ratio
+		}
+		if usage, err := s.quotaShareService.GetKeyUsage(ctx, &k, group); err == nil && usage != nil {
+			ks.Usage5h = usage.Usage5h
+			ks.Usage7d = usage.Usage7d
+		}
+		keyStatuses = append(keyStatuses, ks)
+	}
+
+	return &QuotaShareStatusResponse{
+		GroupState:  state,
+		TotalWeight: totalWeight,
+		Keys:        keyStatuses,
+	}, nil
+}
+
+func (s *adminServiceImpl) resolveQuotaShareTargetGroup(ctx context.Context, groupIDs []int64) (*Group, error) {
+	seenQuotaShare := make(map[int64]struct{})
+	var target *Group
+	for _, gid := range groupIDs {
+		g, err := s.groupRepo.GetByIDLite(ctx, gid)
+		if err != nil || g == nil || !g.IsQuotaShareType() {
+			continue
+		}
+		if _, exists := seenQuotaShare[g.ID]; exists {
+			continue
+		}
+		seenQuotaShare[g.ID] = struct{}{}
+		if target != nil && target.ID != g.ID {
+			return nil, fmt.Errorf("an account can only be bound to 1 quota_share group, got groups %d and %d", target.ID, g.ID)
+		}
+		target = g
+	}
+	return target, nil
+}
+
+// validateQuotaShareSingleAccount checks that the target group list contains at most
+// one quota_share group, and that this quota_share group has at most 1 account bound.
+func (s *adminServiceImpl) validateQuotaShareSingleAccount(ctx context.Context, accountID int64, groupIDs []int64) error {
+	target, err := s.resolveQuotaShareTargetGroup(ctx, groupIDs)
+	if err != nil || target == nil {
+		return err
+	}
+
+	accounts, err := s.accountRepo.ListByGroup(ctx, target.ID)
+	if err != nil {
+		return fmt.Errorf("check quota_share single-account constraint: %w", err)
+	}
+	for _, acc := range accounts {
+		if accountID <= 0 || acc.ID != accountID {
+			return fmt.Errorf("quota_share group %q (id=%d) already bound to account %d; only 1 account allowed", target.Name, target.ID, acc.ID)
+		}
+	}
+	return nil
+}
+
+// validateQuotaShareAccountFanout ensures an account is not already bound to another
+// quota_share group before being added to targetQuotaShareGroupID.
+func (s *adminServiceImpl) validateQuotaShareAccountFanout(ctx context.Context, targetQuotaShareGroupID *int64, accountIDs []int64) error {
+	if len(accountIDs) == 0 {
+		return nil
+	}
+
+	accounts, err := s.accountRepo.GetByIDs(ctx, accountIDs)
+	if err != nil {
+		return fmt.Errorf("load accounts for quota_share fanout check: %w", err)
+	}
+
+	groupCache := make(map[int64]*Group)
+	for _, acc := range accounts {
+		if acc == nil {
+			continue
+		}
+		for _, gid := range acc.GroupIDs {
+			if targetQuotaShareGroupID != nil && gid == *targetQuotaShareGroupID {
+				continue
+			}
+			group, ok := groupCache[gid]
+			if !ok {
+				group, err = s.groupRepo.GetByIDLite(ctx, gid)
+				if err != nil {
+					return fmt.Errorf("load group %d for quota_share fanout check: %w", gid, err)
+				}
+				groupCache[gid] = group
+			}
+			if group != nil && group.IsQuotaShareType() {
+				return fmt.Errorf("account %d already belongs to quota_share group %q (id=%d); one account can only belong to 1 quota_share group", acc.ID, group.Name, group.ID)
+			}
+		}
+	}
+	return nil
+}
+
+func (s *adminServiceImpl) syncQuotaShareAccountMapping(ctx context.Context, accountID int64, groupIDs []int64) error {
+	if s.quotaShareService == nil {
+		return nil
+	}
+	target, err := s.resolveQuotaShareTargetGroup(ctx, groupIDs)
+	if err != nil {
+		return err
+	}
+	if target == nil {
+		s.quotaShareService.UnregisterAccountGroup(accountID)
+		return nil
+	}
+	s.quotaShareService.RegisterAccountGroup(accountID, target.ID)
+	return nil
+}
+
+func (s *adminServiceImpl) unregisterQuotaShareAccounts(accountIDs []int64) {
+	if s.quotaShareService == nil {
+		return
+	}
+	seen := make(map[int64]struct{}, len(accountIDs))
+	for _, accountID := range accountIDs {
+		if accountID <= 0 {
+			continue
+		}
+		if _, ok := seen[accountID]; ok {
+			continue
+		}
+		seen[accountID] = struct{}{}
+		s.quotaShareService.UnregisterAccountGroup(accountID)
+	}
+}
+
+func (s *adminServiceImpl) registerQuotaShareAccounts(accountIDs []int64, groupID int64) {
+	if s.quotaShareService == nil || groupID <= 0 {
+		return
+	}
+	seen := make(map[int64]struct{}, len(accountIDs))
+	for _, accountID := range accountIDs {
+		if accountID <= 0 {
+			continue
+		}
+		if _, ok := seen[accountID]; ok {
+			continue
+		}
+		seen[accountID] = struct{}{}
+		s.quotaShareService.RegisterAccountGroup(accountID, groupID)
 	}
 }
 
@@ -1349,6 +1577,9 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	if subscriptionType == "" {
 		subscriptionType = SubscriptionTypeStandard
 	}
+	if subscriptionType == SubscriptionTypeQuotaShare && platform != PlatformOpenAI {
+		return nil, errors.New("quota_share groups must use the openai platform")
+	}
 
 	// 限额字段：nil/负数 表示"无限制"，0 表示"不允许用量"，正数表示具体限额
 	dailyLimit := normalizeLimit(input.DailyLimitUSD)
@@ -1442,12 +1673,15 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		MessagesDispatchModelConfig:     normalizeOpenAIMessagesDispatchModelConfig(input.MessagesDispatchModelConfig),
 		RPMLimit:                        input.RPMLimit,
 	}
-	sanitizeGroupMessagesDispatchFields(group)
-	if err := s.groupRepo.Create(ctx, group); err != nil {
-		return nil, err
+	if input.Estimated5hLimitUSD != nil && *input.Estimated5hLimitUSD >= 0 {
+		group.Estimated5hLimitUSD = *input.Estimated5hLimitUSD
 	}
+	if input.Estimated7dLimitUSD != nil && *input.Estimated7dLimitUSD >= 0 {
+		group.Estimated7dLimitUSD = *input.Estimated7dLimitUSD
+	}
+	sanitizeGroupMessagesDispatchFields(group)
 
-	// require_oauth_only: 过滤掉 apikey 类型账号
+	// require_oauth_only: 过滤掉 apikey 类型账号（在 DB 写入之前）
 	if group.RequireOAuthOnly && (group.Platform == PlatformOpenAI || group.Platform == PlatformAntigravity || group.Platform == PlatformAnthropic || group.Platform == PlatformGemini) && len(accountIDsToCopy) > 0 {
 		accounts, err := s.accountRepo.GetByIDs(ctx, accountIDsToCopy)
 		if err != nil {
@@ -1467,6 +1701,25 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		}
 		accountIDsToCopy = filtered
 	}
+	if subscriptionType == SubscriptionTypeQuotaShare {
+		if err := s.validateQuotaShareAccountFanout(ctx, nil, accountIDsToCopy); err != nil {
+			return nil, err
+		}
+	}
+
+	// quota_share 组只允许绑定 1 个上游账号（在 DB 写入之前校验，避免残留脏数据）
+	if subscriptionType == SubscriptionTypeQuotaShare && len(accountIDsToCopy) > 1 {
+		return nil, fmt.Errorf("quota_share group only allows 1 upstream account, got %d", len(accountIDsToCopy))
+	}
+
+	if err := s.groupRepo.Create(ctx, group); err != nil {
+		return nil, err
+	}
+
+	// Sync estimated limits to Redis state for quota_share groups
+	if group.IsQuotaShareType() && s.quotaShareService != nil {
+		s.quotaShareService.EnsureGroupStateEstimates(ctx, group.ID, group.Estimated5hLimitUSD, group.Estimated7dLimitUSD)
+	}
 
 	// 如果有需要复制的账号，绑定到新分组
 	if len(accountIDsToCopy) > 0 {
@@ -1474,6 +1727,9 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 			return nil, fmt.Errorf("failed to bind accounts to new group: %w", err)
 		}
 		group.AccountCount = int64(len(accountIDsToCopy))
+		if group.IsQuotaShareType() {
+			s.registerQuotaShareAccounts(accountIDsToCopy, group.ID)
+		}
 	}
 
 	return group, nil
@@ -1569,6 +1825,7 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	if err != nil {
 		return nil, err
 	}
+	wasQuotaShareType := group.IsQuotaShareType()
 
 	if input.Name != "" {
 		group.Name = input.Name
@@ -1595,6 +1852,25 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	// 订阅相关字段
 	if input.SubscriptionType != "" {
 		group.SubscriptionType = input.SubscriptionType
+	}
+	if group.IsQuotaShareType() && group.Platform != PlatformOpenAI {
+		return nil, errors.New("quota_share groups must use the openai platform")
+	}
+	if group.IsQuotaShareType() && len(input.CopyAccountsFromGroupIDs) == 0 {
+		existingAccounts, err := s.accountRepo.ListByGroup(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("list existing quota_share accounts: %w", err)
+		}
+		existingAccountIDs := make([]int64, 0, len(existingAccounts))
+		for _, acc := range existingAccounts {
+			existingAccountIDs = append(existingAccountIDs, acc.ID)
+		}
+		if len(existingAccountIDs) > 1 {
+			return nil, fmt.Errorf("quota_share group only allows 1 upstream account, got %d existing bindings", len(existingAccountIDs))
+		}
+		if err := s.validateQuotaShareAccountFanout(ctx, &id, existingAccountIDs); err != nil {
+			return nil, err
+		}
 	}
 	// 限额字段：nil/负数 表示"无限制"，0 表示"不允许用量"，正数表示具体限额
 	// 前端始终发送这三个字段，无需 nil 守卫
@@ -1678,10 +1954,30 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	if input.RPMLimit != nil {
 		group.RPMLimit = *input.RPMLimit
 	}
+	if input.Estimated5hLimitUSD != nil && *input.Estimated5hLimitUSD >= 0 {
+		group.Estimated5hLimitUSD = *input.Estimated5hLimitUSD
+	}
+	if input.Estimated7dLimitUSD != nil && *input.Estimated7dLimitUSD >= 0 {
+		group.Estimated7dLimitUSD = *input.Estimated7dLimitUSD
+	}
 	sanitizeGroupMessagesDispatchFields(group)
 
 	if err := s.groupRepo.Update(ctx, group); err != nil {
 		return nil, err
+	}
+
+	// Sync estimated limits to Redis state for quota_share groups
+	if group.IsQuotaShareType() && s.quotaShareService != nil {
+		s.quotaShareService.EnsureGroupStateEstimates(ctx, group.ID, group.Estimated5hLimitUSD, group.Estimated7dLimitUSD)
+	}
+	if !group.IsQuotaShareType() && wasQuotaShareType {
+		if oldAccounts, listErr := s.accountRepo.ListByGroup(ctx, id); listErr == nil {
+			oldIDs := make([]int64, 0, len(oldAccounts))
+			for _, acc := range oldAccounts {
+				oldIDs = append(oldIDs, acc.ID)
+			}
+			s.unregisterQuotaShareAccounts(oldIDs)
+		}
 	}
 
 	if s.authCacheInvalidator != nil {
@@ -1690,6 +1986,17 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 
 	// 如果指定了复制账号的源分组，同步绑定（替换当前分组的账号）
 	if len(input.CopyAccountsFromGroupIDs) > 0 {
+		var oldQuotaShareAccountIDs []int64
+		if group.IsQuotaShareType() {
+			oldAccounts, err := s.accountRepo.ListByGroup(ctx, id)
+			if err != nil {
+				return nil, fmt.Errorf("list existing quota_share accounts before rebinding: %w", err)
+			}
+			oldQuotaShareAccountIDs = make([]int64, 0, len(oldAccounts))
+			for _, acc := range oldAccounts {
+				oldQuotaShareAccountIDs = append(oldQuotaShareAccountIDs, acc.ID)
+			}
+		}
 		// 去重源分组 IDs
 		seen := make(map[int64]struct{})
 		uniqueSourceGroupIDs := make([]int64, 0, len(input.CopyAccountsFromGroupIDs))
@@ -1722,6 +2029,11 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 			return nil, fmt.Errorf("failed to get accounts from source groups: %w", err)
 		}
 
+		// quota_share 组只允许绑定 1 个上游账号
+		if group.IsQuotaShareType() && len(accountIDsToCopy) > 1 {
+			return nil, fmt.Errorf("quota_share group only allows 1 upstream account, got %d from source groups", len(accountIDsToCopy))
+		}
+
 		// 先清空当前分组的所有账号绑定
 		if _, err := s.groupRepo.DeleteAccountGroupsByGroupID(ctx, id); err != nil {
 			return nil, fmt.Errorf("failed to clear existing account bindings: %w", err)
@@ -1747,12 +2059,21 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 			}
 			accountIDsToCopy = filtered
 		}
+		if group.IsQuotaShareType() {
+			if err := s.validateQuotaShareAccountFanout(ctx, &id, accountIDsToCopy); err != nil {
+				return nil, err
+			}
+		}
 
 		// 再绑定源分组的账号
 		if len(accountIDsToCopy) > 0 {
 			if err := s.groupRepo.BindAccountsToGroup(ctx, id, accountIDsToCopy); err != nil {
 				return nil, fmt.Errorf("failed to bind accounts to group: %w", err)
 			}
+		}
+		if group.IsQuotaShareType() {
+			s.unregisterQuotaShareAccounts(oldQuotaShareAccountIDs)
+			s.registerQuotaShareAccounts(accountIDsToCopy, id)
 		}
 	}
 
@@ -1876,6 +2197,8 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 		return nil, err
 	}
 
+	oldGroupID := apiKey.GroupID // remember for weight cache invalidation
+
 	if groupID == nil {
 		// nil 表示不修改，直接返回
 		return &AdminUpdateAPIKeyGroupIDResult{APIKey: apiKey}, nil
@@ -1891,6 +2214,7 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 		// 0 表示解绑分组（不修改 user_allowed_groups，避免影响用户其他 Key）
 		apiKey.GroupID = nil
 		apiKey.Group = nil
+		apiKey.QuotaShareOverflowGroupID = nil
 	} else {
 		// 验证目标分组存在且状态为 active
 		group, err := s.groupRepo.GetByID(ctx, *groupID)
@@ -1916,6 +2240,9 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 		gid := *groupID
 		apiKey.GroupID = &gid
 		apiKey.Group = group
+		if !group.IsQuotaShareType() {
+			apiKey.QuotaShareOverflowGroupID = nil
+		}
 
 		// 专属标准分组：使用事务保证「添加分组权限」与「更新 API Key」的原子性
 		if group.IsExclusive && !group.IsSubscriptionType() {
@@ -1953,6 +2280,7 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 			if s.authCacheInvalidator != nil {
 				s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, apiKey.Key)
 			}
+			s.invalidateWeightCacheForGroupChange(ctx, oldGroupID, apiKey.GroupID)
 
 			result.APIKey = apiKey
 			return result, nil
@@ -1968,12 +2296,25 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 	if s.authCacheInvalidator != nil {
 		s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, apiKey.Key)
 	}
+	s.invalidateWeightCacheForGroupChange(ctx, oldGroupID, apiKey.GroupID)
 
 	result.APIKey = apiKey
 	return result, nil
 }
 
 // AdminResetAPIKeyRateLimitUsage resets all API key rate-limit usage windows.
+func (s *adminServiceImpl) invalidateWeightCacheForGroupChange(ctx context.Context, oldGroupID, newGroupID *int64) {
+	if s.quotaShareService == nil {
+		return
+	}
+	if oldGroupID != nil && *oldGroupID > 0 {
+		s.quotaShareService.InvalidateTotalWeight(ctx, *oldGroupID)
+	}
+	if newGroupID != nil && *newGroupID > 0 && (oldGroupID == nil || *newGroupID != *oldGroupID) {
+		s.quotaShareService.InvalidateTotalWeight(ctx, *newGroupID)
+	}
+}
+
 func (s *adminServiceImpl) AdminResetAPIKeyRateLimitUsage(ctx context.Context, keyID int64) (*APIKey, error) {
 	apiKey, err := s.apiKeyRepo.GetByID(ctx, keyID)
 	if err != nil {
@@ -1995,6 +2336,95 @@ func (s *adminServiceImpl) AdminResetAPIKeyRateLimitUsage(ctx context.Context, k
 		_ = s.billingCacheService.InvalidateAPIKeyRateLimit(ctx, apiKey.ID)
 	}
 	return apiKey, nil
+}
+
+func (s *adminServiceImpl) AdminUpdateAPIKeyQuotaWeight(ctx context.Context, keyID int64, weight int) (*APIKey, error) {
+	if weight <= 0 {
+		return nil, errors.New("quota_weight must be > 0")
+	}
+	apiKey, err := s.apiKeyRepo.GetByID(ctx, keyID)
+	if err != nil {
+		return nil, err
+	}
+	apiKey.QuotaWeight = weight
+	if err := s.apiKeyRepo.Update(ctx, apiKey); err != nil {
+		return nil, fmt.Errorf("update api key quota_weight: %w", err)
+	}
+	if s.authCacheInvalidator != nil {
+		s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, apiKey.Key)
+	}
+	// Invalidate the total weight cache for the group
+	if apiKey.GroupID != nil && s.quotaShareService != nil {
+		s.quotaShareService.InvalidateTotalWeight(ctx, *apiKey.GroupID)
+	}
+	return apiKey, nil
+}
+
+func (s *adminServiceImpl) AdminUpdateAPIKeyQuotaShareOverflowGroupID(ctx context.Context, keyID int64, groupID *int64) (*APIKey, error) {
+	apiKey, err := s.apiKeyRepo.GetByID(ctx, keyID)
+	if err != nil {
+		return nil, err
+	}
+	if groupID == nil {
+		return apiKey, nil
+	}
+	if *groupID < 0 {
+		return nil, infraerrors.BadRequest("INVALID_OVERFLOW_GROUP_ID", "quota_share_overflow_group_id must be non-negative")
+	}
+	if *groupID == 0 {
+		apiKey.QuotaShareOverflowGroupID = nil
+		if err := s.apiKeyRepo.Update(ctx, apiKey); err != nil {
+			return nil, fmt.Errorf("clear api key quota_share_overflow_group_id: %w", err)
+		}
+		if s.authCacheInvalidator != nil {
+			s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, apiKey.Key)
+		}
+		return apiKey, nil
+	}
+
+	if apiKey.GroupID == nil || apiKey.Group == nil || !apiKey.Group.IsQuotaShareType() {
+		return nil, infraerrors.BadRequest("OVERFLOW_REQUIRES_QUOTA_SHARE", "api key primary group must be quota_share before setting overflow group")
+	}
+	if *apiKey.GroupID == *groupID {
+		return nil, infraerrors.BadRequest("OVERFLOW_GROUP_SAME_AS_PRIMARY", "overflow group cannot be the same as primary group")
+	}
+
+	overflowGroup, err := s.groupRepo.GetByID(ctx, *groupID)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateQuotaShareOverflowGroup(apiKey.GroupID, overflowGroup); err != nil {
+		return nil, err
+	}
+
+	gid := *groupID
+	apiKey.QuotaShareOverflowGroupID = &gid
+	if err := s.apiKeyRepo.Update(ctx, apiKey); err != nil {
+		return nil, fmt.Errorf("update api key quota_share_overflow_group_id: %w", err)
+	}
+	if s.authCacheInvalidator != nil {
+		s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, apiKey.Key)
+	}
+	return apiKey, nil
+}
+
+func validateQuotaShareOverflowGroup(primaryGroupID *int64, overflowGroup *Group) error {
+	if overflowGroup == nil {
+		return ErrGroupNotFound
+	}
+	if primaryGroupID != nil && overflowGroup.ID == *primaryGroupID {
+		return infraerrors.BadRequest("OVERFLOW_GROUP_SAME_AS_PRIMARY", "overflow group cannot be the same as primary group")
+	}
+	if !overflowGroup.IsActive() {
+		return infraerrors.BadRequest("OVERFLOW_GROUP_NOT_ACTIVE", "overflow group is not active")
+	}
+	if overflowGroup.Platform != PlatformOpenAI {
+		return infraerrors.BadRequest("OVERFLOW_GROUP_PLATFORM_UNSUPPORTED", "overflow group must be an OpenAI group")
+	}
+	if overflowGroup.SubscriptionType != SubscriptionTypeStandard {
+		return infraerrors.BadRequest("OVERFLOW_GROUP_TYPE_UNSUPPORTED", "overflow group must be a standard group")
+	}
+	return nil
 }
 
 // ReplaceUserGroup 替换用户的专属分组
@@ -2112,6 +2542,14 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 			return nil, err
 		}
 	}
+	if len(groupIDs) > 0 {
+		if err := s.validateGroupIDsExist(ctx, groupIDs); err != nil {
+			return nil, err
+		}
+		if err := s.validateQuotaShareSingleAccount(ctx, 0, groupIDs); err != nil {
+			return nil, err
+		}
+	}
 
 	account := &Account{
 		Name:        input.Name,
@@ -2161,6 +2599,9 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	// 绑定分组
 	if len(groupIDs) > 0 {
 		if err := s.accountRepo.BindGroups(ctx, account.ID, groupIDs); err != nil {
+			return nil, err
+		}
+		if err := s.syncQuotaShareAccountMapping(ctx, account.ID, groupIDs); err != nil {
 			return nil, err
 		}
 	}
@@ -2298,6 +2739,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 				return nil, err
 			}
 		}
+		if err := s.validateQuotaShareSingleAccount(ctx, account.ID, *input.GroupIDs); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := s.accountRepo.Update(ctx, account); err != nil {
@@ -2307,6 +2751,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	// 绑定分组
 	if input.GroupIDs != nil {
 		if err := s.accountRepo.BindGroups(ctx, account.ID, *input.GroupIDs); err != nil {
+			return nil, err
+		}
+		if err := s.syncQuotaShareAccountMapping(ctx, account.ID, *input.GroupIDs); err != nil {
 			return nil, err
 		}
 	}
@@ -2342,6 +2789,15 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	if input.GroupIDs != nil {
 		if err := s.validateGroupIDsExist(ctx, *input.GroupIDs); err != nil {
 			return nil, err
+		}
+		if targetQuotaShareGroup, err := s.resolveQuotaShareTargetGroup(ctx, *input.GroupIDs); err != nil {
+			return nil, err
+		} else if targetQuotaShareGroup != nil {
+			for _, accountID := range input.AccountIDs {
+				if err := s.validateQuotaShareSingleAccount(ctx, accountID, *input.GroupIDs); err != nil {
+					return nil, err
+				}
+			}
 		}
 	}
 
@@ -2427,6 +2883,14 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 
 		if input.GroupIDs != nil {
 			if err := s.accountRepo.BindGroups(ctx, accountID, *input.GroupIDs); err != nil {
+				entry.Success = false
+				entry.Error = err.Error()
+				result.Failed++
+				result.FailedIDs = append(result.FailedIDs, accountID)
+				result.Results = append(result.Results, entry)
+				continue
+			}
+			if err := s.syncQuotaShareAccountMapping(ctx, accountID, *input.GroupIDs); err != nil {
 				entry.Success = false
 				entry.Error = err.Error()
 				result.Failed++

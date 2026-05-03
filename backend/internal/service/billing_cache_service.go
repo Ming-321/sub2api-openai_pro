@@ -92,6 +92,7 @@ type BillingCacheService struct {
 	apiKeyRateLimitLoader apiKeyRateLimitLoader
 	userRPMCache          UserRPMCache
 	userGroupRateRepo     UserGroupRateRepository
+	quotaShareService     *QuotaShareService
 	cfg                   *config.Config
 	circuitBreaker        *billingCircuitBreaker
 
@@ -106,6 +107,11 @@ type BillingCacheService struct {
 	cacheWriteDropFullLastLog   int64
 	cacheWriteDropClosedCount   uint64
 	cacheWriteDropClosedLastLog int64
+}
+
+// SetQuotaShareService injects the QuotaShareService after construction to break circular init dependencies.
+func (s *BillingCacheService) SetQuotaShareService(qs *QuotaShareService) {
+	s.quotaShareService = qs
 }
 
 // NewBillingCacheService 创建计费缓存服务
@@ -673,8 +679,15 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 
 	// 判断计费模式
 	isSubscriptionMode := group != nil && group.IsSubscriptionType() && subscription != nil
+	isQuotaShareMode := group != nil && group.IsQuotaShareType()
 
-	if isSubscriptionMode {
+	if isQuotaShareMode {
+		if s.quotaShareService != nil && apiKey != nil {
+			if err := s.quotaShareService.CheckLimits(ctx, apiKey, group); err != nil {
+				return err
+			}
+		}
+	} else if isSubscriptionMode {
 		if err := s.checkSubscriptionEligibility(ctx, user.ID, group, subscription); err != nil {
 			return err
 		}
@@ -684,8 +697,8 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 		}
 	}
 
-	// Check API Key rate limits (applies to both billing modes)
-	if apiKey != nil && apiKey.HasRateLimits() {
+	// Check API Key rate limits (applies to balance & subscription modes; quota_share uses its own limits)
+	if !isQuotaShareMode && apiKey != nil && apiKey.HasRateLimits() {
 		if err := s.checkAPIKeyRateLimits(ctx, apiKey); err != nil {
 			return err
 		}

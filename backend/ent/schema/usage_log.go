@@ -60,6 +60,10 @@ func (UsageLog) Fields() []ent.Field {
 		field.Int64("group_id").
 			Optional().
 			Nillable(),
+		field.Int64("overflowed_from_group_id").
+			Optional().
+			Nillable().
+			Comment("Original quota_share group id when this request overflowed to another group"),
 		field.Int64("subscription_id").
 			Optional().
 			Nillable(),

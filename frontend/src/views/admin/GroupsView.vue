@@ -120,24 +120,37 @@
               <span
                 :class="[
                   'inline-block rounded-full px-2 py-0.5 text-xs font-medium',
-                  row.subscription_type === 'subscription'
+                  row.subscription_type === 'quota_share'
+                    ? 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400'
+                    : row.subscription_type === 'subscription'
                     ? 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400'
                     : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
                 ]"
               >
                 {{
-                  row.subscription_type === "subscription"
+                  row.subscription_type === "quota_share"
+                    ? t("admin.groups.subscription.quotaShare")
+                    : row.subscription_type === "subscription"
                     ? t("admin.groups.subscription.subscription")
                     : t("admin.groups.subscription.standard")
                 }}
               </span>
               <!-- Subscription Limits - compact single line -->
               <div
-                v-if="row.subscription_type === 'subscription'"
+                v-if="row.subscription_type === 'subscription' || row.subscription_type === 'quota_share'"
                 class="text-xs text-gray-500 dark:text-gray-400"
               >
+                <template v-if="row.subscription_type === 'quota_share'">
+                  <span>${{ row.estimated_5h_limit_usd || 0 }}/{{
+                    t("admin.groups.subscription.estimated5hShort")
+                  }}</span>
+                  <span class="mx-1 text-gray-300 dark:text-gray-600">·</span>
+                  <span>${{ row.estimated_7d_limit_usd || 0 }}/{{
+                    t("admin.groups.subscription.estimated7dShort")
+                  }}</span>
+                </template>
                 <template
-                  v-if="
+                  v-else-if="
                     row.daily_limit_usd ||
                     row.weekly_limit_usd ||
                     row.monthly_limit_usd
@@ -318,6 +331,14 @@
                 }}</span>
               </button>
               <button
+                v-if="row.subscription_type === 'quota_share'"
+                @click="openQuotaShareStatus(row)"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-cyan-50 hover:text-cyan-600 dark:hover:bg-cyan-900/20 dark:hover:text-cyan-400"
+              >
+                <Icon name="chart" size="sm" />
+                <span class="text-xs">{{ t("admin.groups.quotaShareStatus") }}</span>
+              </button>
+              <button
                 @click="handleDelete(row)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
               >
@@ -391,6 +412,7 @@
           <Select
             v-model="createForm.platform"
             :options="platformOptions"
+            :disabled="createForm.subscription_type === 'quota_share'"
             data-tour="group-form-platform"
             @change="createForm.copy_accounts_from_group_ids = []"
           />
@@ -646,6 +668,41 @@
                 :placeholder="t('admin.groups.subscription.noLimit')"
               />
             </div>
+          </div>
+
+          <div
+            v-if="createForm.subscription_type === 'quota_share'"
+            class="space-y-4 border-l-2 border-cyan-200 pl-4 dark:border-cyan-800"
+          >
+            <div>
+              <label class="input-label">{{
+                t("admin.groups.subscription.estimated5h")
+              }}</label>
+              <input
+                v-model.number="createForm.estimated_5h_limit_usd"
+                type="number"
+                step="0.01"
+                min="0"
+                class="input"
+                placeholder="0"
+              />
+            </div>
+            <div>
+              <label class="input-label">{{
+                t("admin.groups.subscription.estimated7d")
+              }}</label>
+              <input
+                v-model.number="createForm.estimated_7d_limit_usd"
+                type="number"
+                step="0.01"
+                min="0"
+                class="input"
+                placeholder="0"
+              />
+            </div>
+            <p class="input-hint">
+              {{ t("admin.groups.subscription.quotaShareHint") }}
+            </p>
           </div>
         </div>
 
@@ -1782,6 +1839,41 @@
               />
             </div>
           </div>
+
+          <div
+            v-if="editForm.subscription_type === 'quota_share'"
+            class="space-y-4 border-l-2 border-cyan-200 pl-4 dark:border-cyan-800"
+          >
+            <div>
+              <label class="input-label">{{
+                t("admin.groups.subscription.estimated5h")
+              }}</label>
+              <input
+                v-model.number="editForm.estimated_5h_limit_usd"
+                type="number"
+                step="0.01"
+                min="0"
+                class="input"
+                placeholder="0"
+              />
+            </div>
+            <div>
+              <label class="input-label">{{
+                t("admin.groups.subscription.estimated7d")
+              }}</label>
+              <input
+                v-model.number="editForm.estimated_7d_limit_usd"
+                type="number"
+                step="0.01"
+                min="0"
+                class="input"
+                placeholder="0"
+              />
+            </div>
+            <p class="input-hint">
+              {{ t("admin.groups.subscription.quotaShareHint") }}
+            </p>
+          </div>
         </div>
 
         <!-- 图片生成计费配置 -->
@@ -2735,6 +2827,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from "vue";
+import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useAppStore } from "@/stores/app";
 import { useOnboardingStore } from "@/stores/onboarding";
@@ -2769,6 +2862,7 @@ import {
 const { t } = useI18n();
 const appStore = useAppStore();
 const onboardingStore = useOnboardingStore();
+const router = useRouter();
 
 const columns = computed<Column[]>(() => [
   { key: "name", label: t("admin.groups.columns.name"), sortable: true },
@@ -2843,6 +2937,7 @@ const editStatusOptions = computed(() => [
 const subscriptionTypeOptions = computed(() => [
   { value: "standard", label: t("admin.groups.subscription.standard") },
   { value: "subscription", label: t("admin.groups.subscription.subscription") },
+  { value: "quota_share", label: t("admin.groups.subscription.quotaShare") },
 ]);
 
 // 降级分组选项（创建时）- 仅包含 anthropic 平台且未启用 claude_code_only 的分组
@@ -3009,6 +3104,8 @@ const createForm = reactive({
   daily_limit_usd: null as number | null,
   weekly_limit_usd: null as number | null,
   monthly_limit_usd: null as number | null,
+  estimated_5h_limit_usd: null as number | null,
+  estimated_7d_limit_usd: null as number | null,
   // 图片生成计费配置（仅 antigravity 平台使用）
   image_price_1k: null as number | null,
   image_price_2k: null as number | null,
@@ -3291,6 +3388,8 @@ const editForm = reactive({
   daily_limit_usd: null as number | null,
   weekly_limit_usd: null as number | null,
   monthly_limit_usd: null as number | null,
+  estimated_5h_limit_usd: null as number | null,
+  estimated_7d_limit_usd: null as number | null,
   // 图片生成计费配置（仅 antigravity 平台使用）
   image_price_1k: null as number | null,
   image_price_2k: null as number | null,
@@ -3479,6 +3578,8 @@ const closeCreateModal = () => {
   createForm.daily_limit_usd = null;
   createForm.weekly_limit_usd = null;
   createForm.monthly_limit_usd = null;
+  createForm.estimated_5h_limit_usd = null;
+  createForm.estimated_7d_limit_usd = null;
   createForm.image_price_1k = null;
   createForm.image_price_2k = null;
   createForm.image_price_4k = null;
@@ -3532,6 +3633,12 @@ const handleCreateGroup = async () => {
       monthly_limit_usd: normalizeOptionalLimit(
         createForm.monthly_limit_usd as number | string | null,
       ),
+      estimated_5h_limit_usd: normalizeOptionalLimit(
+        createForm.estimated_5h_limit_usd as number | string | null,
+      ),
+      estimated_7d_limit_usd: normalizeOptionalLimit(
+        createForm.estimated_7d_limit_usd as number | string | null,
+      ),
       model_routing: convertRoutingRulesToApiFormat(
         createModelRoutingRules.value,
       ),
@@ -3551,6 +3658,12 @@ const handleCreateGroup = async () => {
     requestData.daily_limit_usd = emptyToNull(requestData.daily_limit_usd);
     requestData.weekly_limit_usd = emptyToNull(requestData.weekly_limit_usd);
     requestData.monthly_limit_usd = emptyToNull(requestData.monthly_limit_usd);
+    requestData.estimated_5h_limit_usd = emptyToNull(
+      requestData.estimated_5h_limit_usd,
+    );
+    requestData.estimated_7d_limit_usd = emptyToNull(
+      requestData.estimated_7d_limit_usd,
+    );
     await adminAPI.groups.create(requestData);
     appStore.showSuccess(t("admin.groups.groupCreated"));
     closeCreateModal();
@@ -3582,6 +3695,8 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.daily_limit_usd = group.daily_limit_usd;
   editForm.weekly_limit_usd = group.weekly_limit_usd;
   editForm.monthly_limit_usd = group.monthly_limit_usd;
+  editForm.estimated_5h_limit_usd = group.estimated_5h_limit_usd ?? null;
+  editForm.estimated_7d_limit_usd = group.estimated_7d_limit_usd ?? null;
   editForm.image_price_1k = group.image_price_1k;
   editForm.image_price_2k = group.image_price_2k;
   editForm.image_price_4k = group.image_price_4k;
@@ -3651,6 +3766,12 @@ const handleUpdateGroup = async () => {
       monthly_limit_usd: normalizeOptionalLimit(
         editForm.monthly_limit_usd as number | string | null,
       ),
+      estimated_5h_limit_usd: normalizeOptionalLimit(
+        editForm.estimated_5h_limit_usd as number | string | null,
+      ),
+      estimated_7d_limit_usd: normalizeOptionalLimit(
+        editForm.estimated_7d_limit_usd as number | string | null,
+      ),
       fallback_group_id:
         editForm.fallback_group_id === null ? 0 : editForm.fallback_group_id,
       fallback_group_id_on_invalid_request:
@@ -3676,6 +3797,12 @@ const handleUpdateGroup = async () => {
     payload.daily_limit_usd = emptyToNull(payload.daily_limit_usd);
     payload.weekly_limit_usd = emptyToNull(payload.weekly_limit_usd);
     payload.monthly_limit_usd = emptyToNull(payload.monthly_limit_usd);
+    payload.estimated_5h_limit_usd = emptyToNull(
+      payload.estimated_5h_limit_usd,
+    );
+    payload.estimated_7d_limit_usd = emptyToNull(
+      payload.estimated_7d_limit_usd,
+    );
     await adminAPI.groups.update(editingGroup.value.id, payload);
     appStore.showSuccess(t("admin.groups.groupUpdated"));
     closeEditModal();
@@ -3719,6 +3846,13 @@ const handleRateMultipliers = (group: AdminGroup) => {
   showRateMultipliersModal.value = true;
 };
 
+const openQuotaShareStatus = (group: AdminGroup) => {
+  router.push({
+    path: "/admin/quota-share",
+    query: { group_id: String(group.id) },
+  });
+};
+
 const handleRPMOverrides = (group: AdminGroup) => {
   rpmOverridesGroup.value = group;
   showRPMOverridesModal.value = true;
@@ -3753,6 +3887,14 @@ watch(
     if (newVal === "subscription") {
       createForm.is_exclusive = true;
       createForm.fallback_group_id_on_invalid_request = null;
+      createForm.estimated_5h_limit_usd = null;
+      createForm.estimated_7d_limit_usd = null;
+    } else if (newVal === "quota_share") {
+      createForm.platform = "openai";
+      createForm.is_exclusive = false;
+      createForm.daily_limit_usd = null;
+      createForm.weekly_limit_usd = null;
+      createForm.monthly_limit_usd = null;
     }
   },
 );
@@ -3760,6 +3902,10 @@ watch(
 watch(
   () => createForm.platform,
   (newVal) => {
+    if (createForm.subscription_type === "quota_share" && newVal !== "openai") {
+      createForm.platform = "openai";
+      return;
+    }
     if (!["anthropic", "antigravity"].includes(newVal)) {
       createForm.fallback_group_id_on_invalid_request = null;
     }

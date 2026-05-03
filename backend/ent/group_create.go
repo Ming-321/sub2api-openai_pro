@@ -439,6 +439,40 @@ func (_c *GroupCreate) SetNillableRpmLimit(v *int) *GroupCreate {
 	return _c
 }
 
+// SetEstimated5hLimitUsd sets the "estimated_5h_limit_usd" field.
+func (_c *GroupCreate) SetEstimated5hLimitUsd(v float64) *GroupCreate {
+	_c.mutation.SetEstimated5hLimitUsd(v)
+	return _c
+}
+
+// SetNillableEstimated5hLimitUsd sets the "estimated_5h_limit_usd" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableEstimated5hLimitUsd(v *float64) *GroupCreate {
+	if v != nil {
+		_c.SetEstimated5hLimitUsd(*v)
+	}
+	return _c
+}
+
+// SetEstimated7dLimitUsd sets the "estimated_7d_limit_usd" field.
+func (_c *GroupCreate) SetEstimated7dLimitUsd(v float64) *GroupCreate {
+	_c.mutation.SetEstimated7dLimitUsd(v)
+	return _c
+}
+
+// SetNillableEstimated7dLimitUsd sets the "estimated_7d_limit_usd" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableEstimated7dLimitUsd(v *float64) *GroupCreate {
+	if v != nil {
+		_c.SetEstimated7dLimitUsd(*v)
+	}
+	return _c
+}
+
+// SetCalibrationState sets the "calibration_state" field.
+func (_c *GroupCreate) SetCalibrationState(v *domain.QuotaShareCalibrationState) *GroupCreate {
+	_c.mutation.SetCalibrationState(v)
+	return _c
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_c *GroupCreate) AddAPIKeyIDs(ids ...int64) *GroupCreate {
 	_c.mutation.AddAPIKeyIDs(ids...)
@@ -648,6 +682,14 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultRpmLimit
 		_c.mutation.SetRpmLimit(v)
 	}
+	if _, ok := _c.mutation.Estimated5hLimitUsd(); !ok {
+		v := group.DefaultEstimated5hLimitUsd
+		_c.mutation.SetEstimated5hLimitUsd(v)
+	}
+	if _, ok := _c.mutation.Estimated7dLimitUsd(); !ok {
+		v := group.DefaultEstimated7dLimitUsd
+		_c.mutation.SetEstimated7dLimitUsd(v)
+	}
 	return nil
 }
 
@@ -737,6 +779,12 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.RpmLimit(); !ok {
 		return &ValidationError{Name: "rpm_limit", err: errors.New(`ent: missing required field "Group.rpm_limit"`)}
+	}
+	if _, ok := _c.mutation.Estimated5hLimitUsd(); !ok {
+		return &ValidationError{Name: "estimated_5h_limit_usd", err: errors.New(`ent: missing required field "Group.estimated_5h_limit_usd"`)}
+	}
+	if _, ok := _c.mutation.Estimated7dLimitUsd(); !ok {
+		return &ValidationError{Name: "estimated_7d_limit_usd", err: errors.New(`ent: missing required field "Group.estimated_7d_limit_usd"`)}
 	}
 	return nil
 }
@@ -888,6 +936,18 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.RpmLimit(); ok {
 		_spec.SetField(group.FieldRpmLimit, field.TypeInt, value)
 		_node.RpmLimit = value
+	}
+	if value, ok := _c.mutation.Estimated5hLimitUsd(); ok {
+		_spec.SetField(group.FieldEstimated5hLimitUsd, field.TypeFloat64, value)
+		_node.Estimated5hLimitUsd = value
+	}
+	if value, ok := _c.mutation.Estimated7dLimitUsd(); ok {
+		_spec.SetField(group.FieldEstimated7dLimitUsd, field.TypeFloat64, value)
+		_node.Estimated7dLimitUsd = value
+	}
+	if value, ok := _c.mutation.CalibrationState(); ok {
+		_spec.SetField(group.FieldCalibrationState, field.TypeJSON, value)
+		_node.CalibrationState = value
 	}
 	if nodes := _c.mutation.APIKeysIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -1543,6 +1603,60 @@ func (u *GroupUpsert) AddRpmLimit(v int) *GroupUpsert {
 	return u
 }
 
+// SetEstimated5hLimitUsd sets the "estimated_5h_limit_usd" field.
+func (u *GroupUpsert) SetEstimated5hLimitUsd(v float64) *GroupUpsert {
+	u.Set(group.FieldEstimated5hLimitUsd, v)
+	return u
+}
+
+// UpdateEstimated5hLimitUsd sets the "estimated_5h_limit_usd" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateEstimated5hLimitUsd() *GroupUpsert {
+	u.SetExcluded(group.FieldEstimated5hLimitUsd)
+	return u
+}
+
+// AddEstimated5hLimitUsd adds v to the "estimated_5h_limit_usd" field.
+func (u *GroupUpsert) AddEstimated5hLimitUsd(v float64) *GroupUpsert {
+	u.Add(group.FieldEstimated5hLimitUsd, v)
+	return u
+}
+
+// SetEstimated7dLimitUsd sets the "estimated_7d_limit_usd" field.
+func (u *GroupUpsert) SetEstimated7dLimitUsd(v float64) *GroupUpsert {
+	u.Set(group.FieldEstimated7dLimitUsd, v)
+	return u
+}
+
+// UpdateEstimated7dLimitUsd sets the "estimated_7d_limit_usd" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateEstimated7dLimitUsd() *GroupUpsert {
+	u.SetExcluded(group.FieldEstimated7dLimitUsd)
+	return u
+}
+
+// AddEstimated7dLimitUsd adds v to the "estimated_7d_limit_usd" field.
+func (u *GroupUpsert) AddEstimated7dLimitUsd(v float64) *GroupUpsert {
+	u.Add(group.FieldEstimated7dLimitUsd, v)
+	return u
+}
+
+// SetCalibrationState sets the "calibration_state" field.
+func (u *GroupUpsert) SetCalibrationState(v *domain.QuotaShareCalibrationState) *GroupUpsert {
+	u.Set(group.FieldCalibrationState, v)
+	return u
+}
+
+// UpdateCalibrationState sets the "calibration_state" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateCalibrationState() *GroupUpsert {
+	u.SetExcluded(group.FieldCalibrationState)
+	return u
+}
+
+// ClearCalibrationState clears the value of the "calibration_state" field.
+func (u *GroupUpsert) ClearCalibrationState() *GroupUpsert {
+	u.SetNull(group.FieldCalibrationState)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create.
 // Using this option is equivalent to using:
 //
@@ -2166,6 +2280,69 @@ func (u *GroupUpsertOne) AddRpmLimit(v int) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateRpmLimit() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateRpmLimit()
+	})
+}
+
+// SetEstimated5hLimitUsd sets the "estimated_5h_limit_usd" field.
+func (u *GroupUpsertOne) SetEstimated5hLimitUsd(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetEstimated5hLimitUsd(v)
+	})
+}
+
+// AddEstimated5hLimitUsd adds v to the "estimated_5h_limit_usd" field.
+func (u *GroupUpsertOne) AddEstimated5hLimitUsd(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddEstimated5hLimitUsd(v)
+	})
+}
+
+// UpdateEstimated5hLimitUsd sets the "estimated_5h_limit_usd" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateEstimated5hLimitUsd() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateEstimated5hLimitUsd()
+	})
+}
+
+// SetEstimated7dLimitUsd sets the "estimated_7d_limit_usd" field.
+func (u *GroupUpsertOne) SetEstimated7dLimitUsd(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetEstimated7dLimitUsd(v)
+	})
+}
+
+// AddEstimated7dLimitUsd adds v to the "estimated_7d_limit_usd" field.
+func (u *GroupUpsertOne) AddEstimated7dLimitUsd(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddEstimated7dLimitUsd(v)
+	})
+}
+
+// UpdateEstimated7dLimitUsd sets the "estimated_7d_limit_usd" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateEstimated7dLimitUsd() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateEstimated7dLimitUsd()
+	})
+}
+
+// SetCalibrationState sets the "calibration_state" field.
+func (u *GroupUpsertOne) SetCalibrationState(v *domain.QuotaShareCalibrationState) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCalibrationState(v)
+	})
+}
+
+// UpdateCalibrationState sets the "calibration_state" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateCalibrationState() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCalibrationState()
+	})
+}
+
+// ClearCalibrationState clears the value of the "calibration_state" field.
+func (u *GroupUpsertOne) ClearCalibrationState() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearCalibrationState()
 	})
 }
 
@@ -2958,6 +3135,69 @@ func (u *GroupUpsertBulk) AddRpmLimit(v int) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateRpmLimit() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateRpmLimit()
+	})
+}
+
+// SetEstimated5hLimitUsd sets the "estimated_5h_limit_usd" field.
+func (u *GroupUpsertBulk) SetEstimated5hLimitUsd(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetEstimated5hLimitUsd(v)
+	})
+}
+
+// AddEstimated5hLimitUsd adds v to the "estimated_5h_limit_usd" field.
+func (u *GroupUpsertBulk) AddEstimated5hLimitUsd(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddEstimated5hLimitUsd(v)
+	})
+}
+
+// UpdateEstimated5hLimitUsd sets the "estimated_5h_limit_usd" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateEstimated5hLimitUsd() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateEstimated5hLimitUsd()
+	})
+}
+
+// SetEstimated7dLimitUsd sets the "estimated_7d_limit_usd" field.
+func (u *GroupUpsertBulk) SetEstimated7dLimitUsd(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetEstimated7dLimitUsd(v)
+	})
+}
+
+// AddEstimated7dLimitUsd adds v to the "estimated_7d_limit_usd" field.
+func (u *GroupUpsertBulk) AddEstimated7dLimitUsd(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddEstimated7dLimitUsd(v)
+	})
+}
+
+// UpdateEstimated7dLimitUsd sets the "estimated_7d_limit_usd" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateEstimated7dLimitUsd() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateEstimated7dLimitUsd()
+	})
+}
+
+// SetCalibrationState sets the "calibration_state" field.
+func (u *GroupUpsertBulk) SetCalibrationState(v *domain.QuotaShareCalibrationState) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCalibrationState(v)
+	})
+}
+
+// UpdateCalibrationState sets the "calibration_state" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateCalibrationState() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCalibrationState()
+	})
+}
+
+// ClearCalibrationState clears the value of the "calibration_state" field.
+func (u *GroupUpsertBulk) ClearCalibrationState() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearCalibrationState()
 	})
 }
 

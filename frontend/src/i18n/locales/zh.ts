@@ -139,6 +139,7 @@ export default {
     cost: '费用',
     // Status
     quotaMode: 'Key 限额模式',
+    quotaShareMode: '配额共享模式',
     walletBalance: '钱包余额',
     // Ring card titles
     totalQuota: '总额度',
@@ -153,6 +154,9 @@ export default {
     todayExpires: '(今日到期)',
     daysLeft: '({days} 天)',
     usedQuota: '已用额度',
+    quotaShareWeight: '当前权重',
+    upstream5hUsage: '上游 5h 已用',
+    upstream7dUsage: '上游 7d 已用',
     resetNow: '即将重置',
     subscriptionType: '订阅类型',
     subscriptionExpires: '订阅到期',
@@ -609,7 +613,8 @@ export default {
 
   // Groups (shared)
   groups: {
-    subscription: '订阅'
+    subscription: '订阅',
+    quotaShare: '配额共享'
   },
 
   // API Keys
@@ -2045,6 +2050,7 @@ export default {
       rateMultipliers: '专属倍率',
       rateMultipliersTitle: '分组专属倍率管理',
       addUserRate: '添加用户专属倍率',
+      quotaShareStatus: '共享状态',
       rpmOverrides: '专属 RPM',
       rpmOverridesTitle: '分组专属 RPM 管理',
       addUserRpm: '添加用户专属 RPM',
@@ -2075,9 +2081,16 @@ export default {
         typeNotEditable: '分组创建后无法修改计费类型。',
         standard: '标准（余额）',
         subscription: '订阅（配额）',
+        quotaShare: '配额共享（quota_share）',
         dailyLimit: '每日限额（USD）',
         weeklyLimit: '每周限额（USD）',
         monthlyLimit: '每月限额（USD）',
+        estimated5h: '5 小时估算总额（USD）',
+        estimated7d: '7 天估算总额（USD）',
+        estimated5hShort: '5h',
+        estimated7dShort: '7d',
+        quotaShareHint:
+          '把上游单账号的总额度按权重分摊给多个下游 Key。这里填写 5 小时和 7 天窗口的初始估算值，后端会结合上游响应头逐步校准。',
         defaultValidityDays: '默认有效期（天）',
         validityHint: '分配给用户时订阅的有效天数',
         noLimit: '无限制'

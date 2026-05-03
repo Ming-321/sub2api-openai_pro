@@ -143,6 +143,15 @@ const routes: RouteRecordRaw[] = [
       title: 'Key Usage',
     }
   },
+  {
+    path: '/quota-share',
+    name: 'QuotaShareUsage',
+    component: () => import('@/views/KeyUsageView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'Quota Share Usage',
+    }
+  },
 
   // ==================== User Routes ====================
   {
@@ -380,6 +389,16 @@ const routes: RouteRecordRaw[] = [
       title: 'Group Management',
       titleKey: 'admin.groups.title',
       descriptionKey: 'admin.groups.description'
+    }
+  },
+  {
+    path: '/admin/quota-share',
+    name: 'AdminQuotaShare',
+    component: () => import('@/views/admin/QuotaShareView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Quota Share',
     }
   },
   {

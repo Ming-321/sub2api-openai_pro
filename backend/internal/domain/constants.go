@@ -58,6 +58,7 @@ const (
 const (
 	SubscriptionTypeStandard     = "standard"     // 标准计费模式（按余额扣费）
 	SubscriptionTypeSubscription = "subscription" // 订阅模式（按限额控制）
+	SubscriptionTypeQuotaShare   = "quota_share"  // 配额共享模式（上游单账号按权重分配给多个 key）
 )
 
 // Subscription status constants

@@ -9,6 +9,7 @@ import (
 const (
 	BillingTypeBalance      int8 = 0 // 钱包余额
 	BillingTypeSubscription int8 = 1 // 订阅套餐
+	BillingTypeQuotaShare   int8 = 2 // 配额共享
 )
 
 type RequestType int16
@@ -123,8 +124,9 @@ type UsageLog struct {
 	// UpstreamEndpoint is the normalized upstream endpoint path, e.g. /v1/responses.
 	UpstreamEndpoint *string
 
-	GroupID        *int64
-	SubscriptionID *int64
+	GroupID               *int64
+	OverflowedFromGroupID *int64
+	SubscriptionID        *int64
 
 	InputTokens         int
 	OutputTokens        int

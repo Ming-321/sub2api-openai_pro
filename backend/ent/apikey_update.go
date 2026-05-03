@@ -438,6 +438,54 @@ func (_u *APIKeyUpdate) ClearWindow7dStart() *APIKeyUpdate {
 	return _u
 }
 
+// SetQuotaWeight sets the "quota_weight" field.
+func (_u *APIKeyUpdate) SetQuotaWeight(v int) *APIKeyUpdate {
+	_u.mutation.ResetQuotaWeight()
+	_u.mutation.SetQuotaWeight(v)
+	return _u
+}
+
+// SetNillableQuotaWeight sets the "quota_weight" field if the given value is not nil.
+func (_u *APIKeyUpdate) SetNillableQuotaWeight(v *int) *APIKeyUpdate {
+	if v != nil {
+		_u.SetQuotaWeight(*v)
+	}
+	return _u
+}
+
+// AddQuotaWeight adds value to the "quota_weight" field.
+func (_u *APIKeyUpdate) AddQuotaWeight(v int) *APIKeyUpdate {
+	_u.mutation.AddQuotaWeight(v)
+	return _u
+}
+
+// SetQuotaShareOverflowGroupID sets the "quota_share_overflow_group_id" field.
+func (_u *APIKeyUpdate) SetQuotaShareOverflowGroupID(v int64) *APIKeyUpdate {
+	_u.mutation.ResetQuotaShareOverflowGroupID()
+	_u.mutation.SetQuotaShareOverflowGroupID(v)
+	return _u
+}
+
+// SetNillableQuotaShareOverflowGroupID sets the "quota_share_overflow_group_id" field if the given value is not nil.
+func (_u *APIKeyUpdate) SetNillableQuotaShareOverflowGroupID(v *int64) *APIKeyUpdate {
+	if v != nil {
+		_u.SetQuotaShareOverflowGroupID(*v)
+	}
+	return _u
+}
+
+// AddQuotaShareOverflowGroupID adds value to the "quota_share_overflow_group_id" field.
+func (_u *APIKeyUpdate) AddQuotaShareOverflowGroupID(v int64) *APIKeyUpdate {
+	_u.mutation.AddQuotaShareOverflowGroupID(v)
+	return _u
+}
+
+// ClearQuotaShareOverflowGroupID clears the value of the "quota_share_overflow_group_id" field.
+func (_u *APIKeyUpdate) ClearQuotaShareOverflowGroupID() *APIKeyUpdate {
+	_u.mutation.ClearQuotaShareOverflowGroupID()
+	return _u
+}
+
 // SetUser sets the "user" edge to the User entity.
 func (_u *APIKeyUpdate) SetUser(v *User) *APIKeyUpdate {
 	return _u.SetUserID(v.ID)
@@ -695,6 +743,21 @@ func (_u *APIKeyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.Window7dStartCleared() {
 		_spec.ClearField(apikey.FieldWindow7dStart, field.TypeTime)
+	}
+	if value, ok := _u.mutation.QuotaWeight(); ok {
+		_spec.SetField(apikey.FieldQuotaWeight, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedQuotaWeight(); ok {
+		_spec.AddField(apikey.FieldQuotaWeight, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.QuotaShareOverflowGroupID(); ok {
+		_spec.SetField(apikey.FieldQuotaShareOverflowGroupID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedQuotaShareOverflowGroupID(); ok {
+		_spec.AddField(apikey.FieldQuotaShareOverflowGroupID, field.TypeInt64, value)
+	}
+	if _u.mutation.QuotaShareOverflowGroupIDCleared() {
+		_spec.ClearField(apikey.FieldQuotaShareOverflowGroupID, field.TypeInt64)
 	}
 	if _u.mutation.UserCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -1225,6 +1288,54 @@ func (_u *APIKeyUpdateOne) ClearWindow7dStart() *APIKeyUpdateOne {
 	return _u
 }
 
+// SetQuotaWeight sets the "quota_weight" field.
+func (_u *APIKeyUpdateOne) SetQuotaWeight(v int) *APIKeyUpdateOne {
+	_u.mutation.ResetQuotaWeight()
+	_u.mutation.SetQuotaWeight(v)
+	return _u
+}
+
+// SetNillableQuotaWeight sets the "quota_weight" field if the given value is not nil.
+func (_u *APIKeyUpdateOne) SetNillableQuotaWeight(v *int) *APIKeyUpdateOne {
+	if v != nil {
+		_u.SetQuotaWeight(*v)
+	}
+	return _u
+}
+
+// AddQuotaWeight adds value to the "quota_weight" field.
+func (_u *APIKeyUpdateOne) AddQuotaWeight(v int) *APIKeyUpdateOne {
+	_u.mutation.AddQuotaWeight(v)
+	return _u
+}
+
+// SetQuotaShareOverflowGroupID sets the "quota_share_overflow_group_id" field.
+func (_u *APIKeyUpdateOne) SetQuotaShareOverflowGroupID(v int64) *APIKeyUpdateOne {
+	_u.mutation.ResetQuotaShareOverflowGroupID()
+	_u.mutation.SetQuotaShareOverflowGroupID(v)
+	return _u
+}
+
+// SetNillableQuotaShareOverflowGroupID sets the "quota_share_overflow_group_id" field if the given value is not nil.
+func (_u *APIKeyUpdateOne) SetNillableQuotaShareOverflowGroupID(v *int64) *APIKeyUpdateOne {
+	if v != nil {
+		_u.SetQuotaShareOverflowGroupID(*v)
+	}
+	return _u
+}
+
+// AddQuotaShareOverflowGroupID adds value to the "quota_share_overflow_group_id" field.
+func (_u *APIKeyUpdateOne) AddQuotaShareOverflowGroupID(v int64) *APIKeyUpdateOne {
+	_u.mutation.AddQuotaShareOverflowGroupID(v)
+	return _u
+}
+
+// ClearQuotaShareOverflowGroupID clears the value of the "quota_share_overflow_group_id" field.
+func (_u *APIKeyUpdateOne) ClearQuotaShareOverflowGroupID() *APIKeyUpdateOne {
+	_u.mutation.ClearQuotaShareOverflowGroupID()
+	return _u
+}
+
 // SetUser sets the "user" edge to the User entity.
 func (_u *APIKeyUpdateOne) SetUser(v *User) *APIKeyUpdateOne {
 	return _u.SetUserID(v.ID)
@@ -1512,6 +1623,21 @@ func (_u *APIKeyUpdateOne) sqlSave(ctx context.Context) (_node *APIKey, err erro
 	}
 	if _u.mutation.Window7dStartCleared() {
 		_spec.ClearField(apikey.FieldWindow7dStart, field.TypeTime)
+	}
+	if value, ok := _u.mutation.QuotaWeight(); ok {
+		_spec.SetField(apikey.FieldQuotaWeight, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedQuotaWeight(); ok {
+		_spec.AddField(apikey.FieldQuotaWeight, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.QuotaShareOverflowGroupID(); ok {
+		_spec.SetField(apikey.FieldQuotaShareOverflowGroupID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedQuotaShareOverflowGroupID(); ok {
+		_spec.AddField(apikey.FieldQuotaShareOverflowGroupID, field.TypeInt64, value)
+	}
+	if _u.mutation.QuotaShareOverflowGroupIDCleared() {
+		_spec.ClearField(apikey.FieldQuotaShareOverflowGroupID, field.TypeInt64)
 	}
 	if _u.mutation.UserCleared() {
 		edge := &sqlgraph.EdgeSpec{

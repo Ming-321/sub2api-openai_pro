@@ -12,6 +12,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/server/routes"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/Wei-Shaw/sub2api/internal/web"
+	quotashare "github.com/Wei-Shaw/sub2api/internal/web/quota_share"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
@@ -79,6 +80,9 @@ func SetupRouter(
 	} else {
 		settingService.SetOnUpdateCallback(refreshFrameOrigins)
 	}
+
+	// Quota Share 独立前端页面
+	quotashare.RegisterRoutes(r)
 
 	// 注册路由
 	registerRoutes(r, handlers, jwtAuth, adminAuth, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg, redisClient)
