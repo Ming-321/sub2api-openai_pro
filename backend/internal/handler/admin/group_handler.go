@@ -546,6 +546,11 @@ type UpdateSortOrderRequest struct {
 	} `json:"updates" binding:"required,min=1"`
 }
 
+type QuotaShareCalibrationActionRequest struct {
+	Window string `json:"window" binding:"omitempty,oneof=5h 7d all"`
+	Reason string `json:"reason"`
+}
+
 // UpdateSortOrder handles updating group sort orders
 // PUT /api/v1/admin/groups/sort-order
 func (h *GroupHandler) UpdateSortOrder(c *gin.Context) {
@@ -586,5 +591,88 @@ func (h *GroupHandler) GetQuotaShareStatus(c *gin.Context) {
 		return
 	}
 
+	response.Success(c, status)
+}
+
+// GetQuotaShareCalibrationStatus returns pending calibration suggestions for a quota_share group.
+// GET /api/v1/admin/groups/:id/quota-share-calibration
+func (h *GroupHandler) GetQuotaShareCalibrationStatus(c *gin.Context) {
+	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid group ID")
+		return
+	}
+
+	status, err := h.adminService.GetQuotaShareCalibrationStatus(c.Request.Context(), groupID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, status)
+}
+
+// ApplyQuotaShareCalibrationSuggestion applies pending suggestions to formal estimates.
+// POST /api/v1/admin/groups/:id/quota-share-calibration/apply
+func (h *GroupHandler) ApplyQuotaShareCalibrationSuggestion(c *gin.Context) {
+	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid group ID")
+		return
+	}
+
+	var req QuotaShareCalibrationActionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	if req.Window == "" {
+		req.Window = "all"
+	}
+
+	group, err := h.adminService.ApplyQuotaShareCalibrationSuggestion(c.Request.Context(), groupID, req.Window)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, group)
+}
+
+// DiscardQuotaShareCalibrationSuggestion discards pending calibration suggestions.
+// POST /api/v1/admin/groups/:id/quota-share-calibration/discard
+func (h *GroupHandler) DiscardQuotaShareCalibrationSuggestion(c *gin.Context) {
+	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid group ID")
+		return
+	}
+
+	var req QuotaShareCalibrationActionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	if req.Window == "" {
+		req.Window = "all"
+	}
+
+	group, err := h.adminService.DiscardQuotaShareCalibrationSuggestion(c.Request.Context(), groupID, req.Window, req.Reason)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, group)
+}
+
+// GetQuotaShareCalibrationReminder returns lightweight admin reminder status.
+// GET /api/v1/admin/groups/quota-share-calibration-reminder
+func (h *GroupHandler) GetQuotaShareCalibrationReminder(c *gin.Context) {
+	status, err := h.adminService.GetQuotaShareCalibrationReminder(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 	response.Success(c, status)
 }

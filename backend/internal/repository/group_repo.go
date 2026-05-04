@@ -854,3 +854,23 @@ func (r *groupRepository) UpdateQuotaShareEstimates(ctx context.Context, groupID
 		groupID, est5h, est7d, calJSON)
 	return err
 }
+
+// UpdateQuotaShareCalibrationState updates only the calibration state for a quota_share group.
+func (r *groupRepository) UpdateQuotaShareCalibrationState(ctx context.Context, groupID int64, calState *domain.QuotaShareCalibrationState) error {
+	var calJSON []byte
+	var err error
+	if calState != nil {
+		calJSON, err = json.Marshal(calState)
+		if err != nil {
+			return err
+		}
+	}
+
+	_, err = r.sql.ExecContext(ctx, `
+		UPDATE groups
+		SET calibration_state = $2,
+		    updated_at = NOW()
+		WHERE id = $1 AND deleted_at IS NULL`,
+		groupID, calJSON)
+	return err
+}

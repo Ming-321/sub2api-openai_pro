@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -108,6 +109,7 @@ type QuotaShareKeyUsage struct {
 type QuotaShareGroupRepository interface {
 	GetByIDLite(ctx context.Context, id int64) (*Group, error)
 	UpdateQuotaShareEstimates(ctx context.Context, groupID int64, est5h, est7d float64, calState *domain.QuotaShareCalibrationState) error
+	UpdateQuotaShareCalibrationState(ctx context.Context, groupID int64, calState *domain.QuotaShareCalibrationState) error
 }
 
 // QuotaShareKeyRepository provides weight information.
@@ -128,6 +130,35 @@ type QuotaShareService struct {
 	sfCal          singleflight.Group
 	mu             sync.Mutex // protects calibration writes
 	accountGroupID sync.Map   // accountID(int64) → groupID(int64) lazy cache
+}
+
+type QuotaShareCalibrationWindowView struct {
+	Window     string                                   `json:"window"`
+	Estimate   float64                                  `json:"estimate"`
+	Suggestion *domain.QuotaShareCalibrationSuggestion  `json:"suggestion,omitempty"`
+	State      *domain.QuotaShareCalibrationWindowState `json:"state,omitempty"`
+}
+
+type QuotaShareCalibrationStatusResponse struct {
+	GroupID    int64                             `json:"group_id"`
+	GroupName  string                            `json:"group_name"`
+	HasPending bool                              `json:"has_pending"`
+	Windows    []QuotaShareCalibrationWindowView `json:"windows"`
+}
+
+type QuotaShareCalibrationReminderGroup struct {
+	GroupID    int64  `json:"group_id"`
+	GroupName  string `json:"group_name"`
+	Status     string `json:"status"`
+	Reason     string `json:"reason,omitempty"`
+	HasPending bool   `json:"has_pending"`
+}
+
+type QuotaShareCalibrationReminderResponse struct {
+	HasQuotaShare    bool                                 `json:"has_quota_share"`
+	PendingCount     int                                  `json:"pending_count"`
+	UnavailableCount int                                  `json:"unavailable_count"`
+	Groups           []QuotaShareCalibrationReminderGroup `json:"groups"`
 }
 
 func NewQuotaShareService(cache QuotaShareCache, groupRepo QuotaShareGroupRepository, keyRepo QuotaShareKeyRepository, usageRepo QuotaShareUsageRepository) *QuotaShareService {
@@ -392,54 +423,21 @@ func (s *QuotaShareService) doCalibrate(ctx context.Context, group *Group, norm 
 	now := time.Now()
 	updated := false
 
-	// Calibrate 5h window (uses its own independent localUSD counter)
 	if norm.Used5hPercent != nil && calState.Window5h != nil {
-		w := calState.Window5h
-		if s.shouldCalibrate(now, w.LastCalibrationAt, *norm.Used5hPercent, w.LastUpstreamPct) {
-			localUSD5h, _ := s.cache.GetAndResetLocalUSD(ctx, group.ID, "5h")
-			if newEst := s.computeCalibration(w, *norm.Used5hPercent, group.Estimated5hLimitUSD, localUSD5h); newEst > 0 {
-				group.Estimated5hLimitUSD = newEst
-				w.CurrentEstimateUSD = newEst
-				w.LastCalibrationAt = &now
-				w.LastUpstreamPct = *norm.Used5hPercent
-				w.CalibrationCount++
-				updated = true
-			}
+		if s.prepareCalibrationSuggestion(ctx, group.ID, "5h", calState.Window5h, *norm.Used5hPercent, group.Estimated5hLimitUSD, now) {
+			updated = true
 		}
 	}
 
-	// Calibrate 7d window (uses its own independent localUSD counter)
 	if norm.Used7dPercent != nil && calState.Window7d != nil {
-		w := calState.Window7d
-		if s.shouldCalibrate(now, w.LastCalibrationAt, *norm.Used7dPercent, w.LastUpstreamPct) {
-			localUSD7d, _ := s.cache.GetAndResetLocalUSD(ctx, group.ID, "7d")
-			if newEst := s.computeCalibration(w, *norm.Used7dPercent, group.Estimated7dLimitUSD, localUSD7d); newEst > 0 {
-				group.Estimated7dLimitUSD = newEst
-				w.CurrentEstimateUSD = newEst
-				w.LastCalibrationAt = &now
-				w.LastUpstreamPct = *norm.Used7dPercent
-				w.CalibrationCount++
-				updated = true
-			}
+		if s.prepareCalibrationSuggestion(ctx, group.ID, "7d", calState.Window7d, *norm.Used7dPercent, group.Estimated7dLimitUSD, now) {
+			updated = true
 		}
 	}
 
-	if updated {
-		// Update Redis state estimates so CheckLimits picks up new values immediately
-		if state, err := s.cache.GetGroupState(ctx, group.ID); err == nil && state != nil {
-			state.Estimated5hLimitUSD = group.Estimated5hLimitUSD
-			state.Estimated7dLimitUSD = group.Estimated7dLimitUSD
-			_ = s.cache.SetGroupState(ctx, group.ID, state)
-		}
-
-		if s.groupRepo != nil {
-			go func() {
-				updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				if err := s.groupRepo.UpdateQuotaShareEstimates(updateCtx, group.ID, group.Estimated5hLimitUSD, group.Estimated7dLimitUSD, calState); err != nil {
-					slog.Error("quota_share: failed to persist calibration", "group_id", group.ID, "error", err)
-				}
-			}()
+	if updated && s.groupRepo != nil {
+		if err := s.groupRepo.UpdateQuotaShareCalibrationState(ctx, group.ID, calState); err != nil {
+			slog.Error("quota_share: failed to persist calibration suggestion", "group_id", group.ID, "error", err)
 		}
 	}
 }
@@ -452,14 +450,85 @@ func (s *QuotaShareService) shouldCalibrate(now time.Time, lastCal *time.Time, c
 	return deltaPct >= calibrationMinDeltaPct
 }
 
-func (s *QuotaShareService) computeCalibration(w *domain.QuotaShareCalibrationWindowState, currentUpstreamPct, currentEstimate, localUSD float64) float64 {
+func (s *QuotaShareService) prepareCalibrationSuggestion(ctx context.Context, groupID int64, window string, w *domain.QuotaShareCalibrationWindowState, currentUpstreamPct, currentEstimate float64, now time.Time) bool {
+	if w == nil {
+		return false
+	}
+	if w.EMAAlpha <= 0 || w.EMAAlpha > 1 {
+		w.EMAAlpha = calibrationDefaultAlpha
+	}
+	if !s.shouldCalibrate(now, w.LastCalibrationAt, currentUpstreamPct, w.LastUpstreamPct) {
+		return false
+	}
+
+	deltaPct := currentUpstreamPct - w.LastUpstreamPct
+	suggestion := &domain.QuotaShareCalibrationSuggestion{
+		Window:             window,
+		CurrentEstimateUSD: currentEstimate,
+		UpstreamPctStart:   w.LastUpstreamPct,
+		UpstreamPctCurrent: currentUpstreamPct,
+		UpstreamPctDelta:   deltaPct,
+		EMAAlpha:           w.EMAAlpha,
+		CalculatedAt:       &now,
+	}
+
+	if deltaPct < 0.5 {
+		suggestion.Status = domain.QuotaShareCalibrationSuggestionStatusInsufficientData
+		suggestion.Reason = "上游用量百分比增量不足，暂不能可靠估算"
+		w.PendingSuggestion = suggestion
+		w.LastCalibrationAt = &now
+		w.LastUpstreamPct = currentUpstreamPct
+		return true
+	}
+
+	localUSD, err := s.cache.GetAndResetLocalUSD(ctx, groupID, window)
+	if err != nil {
+		suggestion.Status = domain.QuotaShareCalibrationSuggestionStatusInsufficientData
+		suggestion.Reason = "读取本地采样用量失败"
+		w.PendingSuggestion = suggestion
+		w.LastCalibrationAt = &now
+		w.LastUpstreamPct = currentUpstreamPct
+		slog.Warn("quota_share: failed to read local USD for calibration", "group_id", groupID, "window", window, "error", err)
+		return true
+	}
+	suggestion.LocalUSD = localUSD
+
+	newEst, reason := s.computeCalibration(w, currentUpstreamPct, currentEstimate, localUSD)
+	if newEst <= 0 {
+		if reason == "" {
+			reason = "采样数据不足，暂不能可靠估算"
+		}
+		suggestion.Status = domain.QuotaShareCalibrationSuggestionStatusInsufficientData
+		if strings.Contains(reason, "deviation") {
+			suggestion.Status = domain.QuotaShareCalibrationSuggestionStatusRejected
+			reason = "新估算与当前正式配额偏差过大，已拒绝自动建议"
+		}
+		suggestion.Reason = reason
+		w.PendingSuggestion = suggestion
+		w.LastCalibrationAt = &now
+		w.LastUpstreamPct = currentUpstreamPct
+		w.LastLocalUSD = localUSD
+		return true
+	}
+
+	suggestion.Status = domain.QuotaShareCalibrationSuggestionStatusPending
+	suggestion.SuggestedEstimateUSD = newEst
+	w.PendingSuggestion = suggestion
+	w.LastCalibrationAt = &now
+	w.LastUpstreamPct = currentUpstreamPct
+	w.LastLocalUSD = localUSD
+	w.CalibrationCount++
+	return true
+}
+
+func (s *QuotaShareService) computeCalibration(w *domain.QuotaShareCalibrationWindowState, currentUpstreamPct, currentEstimate, localUSD float64) (float64, string) {
 	deltaPct := currentUpstreamPct - w.LastUpstreamPct
 	if deltaPct < 0.5 {
-		return 0 // too small to be reliable
+		return 0, "upstream delta too small"
 	}
 
 	if localUSD <= 0 {
-		return 0
+		return 0, "本地用量采样为 0，暂不能可靠估算"
 	}
 
 	eNew := localUSD / (deltaPct / 100.0)
@@ -470,7 +539,7 @@ func (s *QuotaShareService) computeCalibration(w *domain.QuotaShareCalibrationWi
 		if deviation > calibrationMaxDeviation || deviation < 1.0/calibrationMaxDeviation {
 			slog.Warn("quota_share: calibration deviation too large, skipping",
 				"e_new", eNew, "e_old", currentEstimate, "deviation", deviation)
-			return 0
+			return 0, "deviation too large"
 		}
 	}
 
@@ -480,9 +549,9 @@ func (s *QuotaShareService) computeCalibration(w *domain.QuotaShareCalibrationWi
 	}
 
 	if currentEstimate <= 0 {
-		return eNew
+		return eNew, ""
 	}
-	return alpha*eNew + (1-alpha)*currentEstimate
+	return alpha*eNew + (1-alpha)*currentEstimate, ""
 }
 
 func (s *QuotaShareService) getTotalWeight(ctx context.Context, groupID int64) (int, error) {
@@ -602,6 +671,215 @@ func (s *QuotaShareService) EnsureGroupStateEstimates(ctx context.Context, group
 	if err := s.cache.SetGroupState(ctx, groupID, state); err != nil {
 		slog.Error("quota_share: failed to update estimates in Redis", "group_id", groupID, "error", err)
 	}
+}
+
+func (s *QuotaShareService) GetCalibrationStatus(ctx context.Context, group *Group) (*QuotaShareCalibrationStatusResponse, error) {
+	if group == nil || !group.IsQuotaShareType() {
+		return nil, errors.New("group is not a quota_share type")
+	}
+	state := group.CalibrationState
+	resp := &QuotaShareCalibrationStatusResponse{
+		GroupID:   group.ID,
+		GroupName: group.Name,
+		Windows: []QuotaShareCalibrationWindowView{
+			{
+				Window:     "5h",
+				Estimate:   group.Estimated5hLimitUSD,
+				State:      quotaShareWindowState(state, "5h"),
+				Suggestion: quotaShareWindowSuggestion(state, "5h"),
+			},
+			{
+				Window:     "7d",
+				Estimate:   group.Estimated7dLimitUSD,
+				State:      quotaShareWindowState(state, "7d"),
+				Suggestion: quotaShareWindowSuggestion(state, "7d"),
+			},
+		},
+	}
+	for _, w := range resp.Windows {
+		if isPendingQuotaShareSuggestion(w.Suggestion) {
+			resp.HasPending = true
+			break
+		}
+	}
+	return resp, nil
+}
+
+func (s *QuotaShareService) ApplyCalibrationSuggestion(ctx context.Context, groupID int64, window string) (*Group, error) {
+	if s.groupRepo == nil {
+		return nil, errors.New("quota_share group repository not configured")
+	}
+	group, err := s.groupRepo.GetByIDLite(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+	if group == nil || !group.IsQuotaShareType() {
+		return nil, errors.New("group is not a quota_share type")
+	}
+	state := group.CalibrationState
+	if state == nil {
+		return nil, errors.New("no calibration state available")
+	}
+
+	now := time.Now()
+	applied := false
+	est5h := group.Estimated5hLimitUSD
+	est7d := group.Estimated7dLimitUSD
+
+	if window == "" || window == "all" || window == "5h" {
+		if suggestion := quotaShareWindowSuggestion(state, "5h"); isPendingQuotaShareSuggestion(suggestion) {
+			est5h = suggestion.SuggestedEstimateUSD
+			suggestion.Status = domain.QuotaShareCalibrationSuggestionStatusApplied
+			suggestion.AppliedAt = &now
+			if state.Window5h != nil {
+				state.Window5h.CurrentEstimateUSD = est5h
+			}
+			applied = true
+		}
+	}
+	if window == "" || window == "all" || window == "7d" {
+		if suggestion := quotaShareWindowSuggestion(state, "7d"); isPendingQuotaShareSuggestion(suggestion) {
+			est7d = suggestion.SuggestedEstimateUSD
+			suggestion.Status = domain.QuotaShareCalibrationSuggestionStatusApplied
+			suggestion.AppliedAt = &now
+			if state.Window7d != nil {
+				state.Window7d.CurrentEstimateUSD = est7d
+			}
+			applied = true
+		}
+	}
+	if !applied {
+		return nil, errors.New("no pending quota_share calibration suggestion to apply")
+	}
+
+	if err := s.groupRepo.UpdateQuotaShareEstimates(ctx, groupID, est5h, est7d, state); err != nil {
+		return nil, err
+	}
+	s.EnsureGroupStateEstimates(ctx, groupID, est5h, est7d)
+	group.Estimated5hLimitUSD = est5h
+	group.Estimated7dLimitUSD = est7d
+	group.CalibrationState = state
+	return group, nil
+}
+
+func (s *QuotaShareService) DiscardCalibrationSuggestion(ctx context.Context, groupID int64, window, reason string) (*Group, error) {
+	if s.groupRepo == nil {
+		return nil, errors.New("quota_share group repository not configured")
+	}
+	group, err := s.groupRepo.GetByIDLite(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+	if group == nil || !group.IsQuotaShareType() {
+		return nil, errors.New("group is not a quota_share type")
+	}
+	state := group.CalibrationState
+	if state == nil {
+		return nil, errors.New("no calibration state available")
+	}
+
+	now := time.Now()
+	discarded := false
+	if reason == "" {
+		reason = "管理员已忽略本次建议"
+	}
+	if window == "" || window == "all" || window == "5h" {
+		if suggestion := quotaShareWindowSuggestion(state, "5h"); isPendingQuotaShareSuggestion(suggestion) {
+			suggestion.Status = domain.QuotaShareCalibrationSuggestionStatusDiscarded
+			suggestion.Reason = reason
+			suggestion.DiscardedAt = &now
+			discarded = true
+		}
+	}
+	if window == "" || window == "all" || window == "7d" {
+		if suggestion := quotaShareWindowSuggestion(state, "7d"); isPendingQuotaShareSuggestion(suggestion) {
+			suggestion.Status = domain.QuotaShareCalibrationSuggestionStatusDiscarded
+			suggestion.Reason = reason
+			suggestion.DiscardedAt = &now
+			discarded = true
+		}
+	}
+	if !discarded {
+		return nil, errors.New("no pending quota_share calibration suggestion to discard")
+	}
+
+	if err := s.groupRepo.UpdateQuotaShareCalibrationState(ctx, groupID, state); err != nil {
+		return nil, err
+	}
+	group.CalibrationState = state
+	return group, nil
+}
+
+func BuildQuotaShareCalibrationReminder(groups []Group) *QuotaShareCalibrationReminderResponse {
+	resp := &QuotaShareCalibrationReminderResponse{}
+	for _, group := range groups {
+		if !group.IsQuotaShareType() {
+			continue
+		}
+		resp.HasQuotaShare = true
+		item := QuotaShareCalibrationReminderGroup{
+			GroupID:   group.ID,
+			GroupName: group.Name,
+			Status:    domain.QuotaShareCalibrationSuggestionStatusInsufficientData,
+			Reason:    "尚无足够校准采样，暂不可更新",
+		}
+		if suggestion := firstQuotaShareSuggestion(group.CalibrationState); suggestion != nil {
+			item.Status = suggestion.Status
+			item.Reason = suggestion.Reason
+			item.HasPending = isPendingQuotaShareSuggestion(suggestion)
+		}
+		if item.HasPending {
+			resp.PendingCount++
+		} else {
+			resp.UnavailableCount++
+		}
+		resp.Groups = append(resp.Groups, item)
+	}
+	return resp
+}
+
+func quotaShareWindowState(state *domain.QuotaShareCalibrationState, window string) *domain.QuotaShareCalibrationWindowState {
+	if state == nil {
+		return nil
+	}
+	switch window {
+	case "5h":
+		return state.Window5h
+	case "7d":
+		return state.Window7d
+	default:
+		return nil
+	}
+}
+
+func quotaShareWindowSuggestion(state *domain.QuotaShareCalibrationState, window string) *domain.QuotaShareCalibrationSuggestion {
+	if w := quotaShareWindowState(state, window); w != nil {
+		return w.PendingSuggestion
+	}
+	return nil
+}
+
+func firstQuotaShareSuggestion(state *domain.QuotaShareCalibrationState) *domain.QuotaShareCalibrationSuggestion {
+	if suggestion := quotaShareWindowSuggestion(state, "5h"); suggestion != nil {
+		if isPendingQuotaShareSuggestion(suggestion) {
+			return suggestion
+		}
+	}
+	if suggestion := quotaShareWindowSuggestion(state, "7d"); suggestion != nil {
+		if isPendingQuotaShareSuggestion(suggestion) {
+			return suggestion
+		}
+	}
+	if suggestion := quotaShareWindowSuggestion(state, "5h"); suggestion != nil {
+		return suggestion
+	}
+	return quotaShareWindowSuggestion(state, "7d")
+}
+
+func isPendingQuotaShareSuggestion(suggestion *domain.QuotaShareCalibrationSuggestion) bool {
+	return suggestion != nil &&
+		suggestion.Status == domain.QuotaShareCalibrationSuggestionStatusPending &&
+		suggestion.SuggestedEstimateUSD > 0
 }
 
 // RegisterAccountGroup caches the association between an account and its quota_share group.

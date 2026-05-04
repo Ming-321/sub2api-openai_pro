@@ -242,6 +242,7 @@ func registerGroupRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		groups.GET("/all", h.Admin.Group.GetAll)
 		groups.GET("/usage-summary", h.Admin.Group.GetUsageSummary)
 		groups.GET("/capacity-summary", h.Admin.Group.GetCapacitySummary)
+		groups.GET("/quota-share-calibration-reminder", h.Admin.Group.GetQuotaShareCalibrationReminder)
 		groups.PUT("/sort-order", h.Admin.Group.UpdateSortOrder)
 		groups.GET("/:id", h.Admin.Group.GetByID)
 		groups.POST("", h.Admin.Group.Create)
@@ -255,6 +256,9 @@ func registerGroupRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		groups.DELETE("/:id/rpm-overrides", h.Admin.Group.ClearGroupRPMOverrides)
 		groups.GET("/:id/api-keys", h.Admin.Group.GetGroupAPIKeys)
 		groups.GET("/:id/quota-share-status", h.Admin.Group.GetQuotaShareStatus)
+		groups.GET("/:id/quota-share-calibration", h.Admin.Group.GetQuotaShareCalibrationStatus)
+		groups.POST("/:id/quota-share-calibration/apply", h.Admin.Group.ApplyQuotaShareCalibrationSuggestion)
+		groups.POST("/:id/quota-share-calibration/discard", h.Admin.Group.DiscardQuotaShareCalibrationSuggestion)
 	}
 }
 

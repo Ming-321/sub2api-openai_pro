@@ -476,7 +476,26 @@ export interface QuotaShareCalibrationWindowState {
   calibration_count?: number
   current_estimate_usd?: number
   last_upstream_pct?: number
+  last_local_usd?: number
   ema_alpha?: number
+  last_calibration_at?: string | null
+  pending_suggestion?: QuotaShareCalibrationSuggestion | null
+}
+
+export interface QuotaShareCalibrationSuggestion {
+  window: '5h' | '7d' | string
+  status: 'pending' | 'insufficient_data' | 'rejected' | 'applied' | 'discarded' | string
+  reason?: string
+  suggested_estimate_usd?: number
+  current_estimate_usd: number
+  local_usd?: number
+  upstream_pct_start: number
+  upstream_pct_current: number
+  upstream_pct_delta: number
+  ema_alpha?: number
+  calculated_at?: string | null
+  applied_at?: string | null
+  discarded_at?: string | null
 }
 
 export interface QuotaShareCalibrationState {
@@ -692,6 +711,35 @@ export interface QuotaShareStatusResponse {
   group_state: QuotaShareGroupState | null
   total_weight: number
   keys: QuotaShareKeyStatus[]
+}
+
+export interface QuotaShareCalibrationWindowView {
+  window: '5h' | '7d' | string
+  estimate: number
+  suggestion?: QuotaShareCalibrationSuggestion | null
+  state?: QuotaShareCalibrationWindowState | null
+}
+
+export interface QuotaShareCalibrationStatusResponse {
+  group_id: number
+  group_name: string
+  has_pending: boolean
+  windows: QuotaShareCalibrationWindowView[]
+}
+
+export interface QuotaShareCalibrationReminderGroup {
+  group_id: number
+  group_name: string
+  status: string
+  reason?: string
+  has_pending: boolean
+}
+
+export interface QuotaShareCalibrationReminderResponse {
+  has_quota_share: boolean
+  pending_count: number
+  unavailable_count: number
+  groups: QuotaShareCalibrationReminderGroup[]
 }
 
 // ==================== Account & Proxy Types ====================

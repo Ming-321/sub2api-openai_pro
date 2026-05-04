@@ -72,6 +72,10 @@ type AdminService interface {
 
 	// GetQuotaShareStatus returns the real-time Redis state for a quota_share group.
 	GetQuotaShareStatus(ctx context.Context, groupID int64) (*QuotaShareStatusResponse, error)
+	GetQuotaShareCalibrationStatus(ctx context.Context, groupID int64) (*QuotaShareCalibrationStatusResponse, error)
+	ApplyQuotaShareCalibrationSuggestion(ctx context.Context, groupID int64, window string) (*Group, error)
+	DiscardQuotaShareCalibrationSuggestion(ctx context.Context, groupID int64, window, reason string) (*Group, error)
+	GetQuotaShareCalibrationReminder(ctx context.Context) (*QuotaShareCalibrationReminderResponse, error)
 
 	// Account management
 	ListAccounts(ctx context.Context, page, pageSize int, platform, accountType, status, search string, groupID int64, privacyMode string, sortBy, sortOrder string) ([]Account, int64, error)
@@ -669,6 +673,39 @@ func (s *adminServiceImpl) GetQuotaShareStatus(ctx context.Context, groupID int6
 		TotalWeight: totalWeight,
 		Keys:        keyStatuses,
 	}, nil
+}
+
+func (s *adminServiceImpl) GetQuotaShareCalibrationStatus(ctx context.Context, groupID int64) (*QuotaShareCalibrationStatusResponse, error) {
+	if s.quotaShareService == nil {
+		return nil, errors.New("quota_share service not available")
+	}
+	group, err := s.groupRepo.GetByID(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+	return s.quotaShareService.GetCalibrationStatus(ctx, group)
+}
+
+func (s *adminServiceImpl) ApplyQuotaShareCalibrationSuggestion(ctx context.Context, groupID int64, window string) (*Group, error) {
+	if s.quotaShareService == nil {
+		return nil, errors.New("quota_share service not available")
+	}
+	return s.quotaShareService.ApplyCalibrationSuggestion(ctx, groupID, window)
+}
+
+func (s *adminServiceImpl) DiscardQuotaShareCalibrationSuggestion(ctx context.Context, groupID int64, window, reason string) (*Group, error) {
+	if s.quotaShareService == nil {
+		return nil, errors.New("quota_share service not available")
+	}
+	return s.quotaShareService.DiscardCalibrationSuggestion(ctx, groupID, window, reason)
+}
+
+func (s *adminServiceImpl) GetQuotaShareCalibrationReminder(ctx context.Context) (*QuotaShareCalibrationReminderResponse, error) {
+	groups, err := s.groupRepo.ListActive(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return BuildQuotaShareCalibrationReminder(groups), nil
 }
 
 func (s *adminServiceImpl) resolveQuotaShareTargetGroup(ctx context.Context, groupIDs []int64) (*Group, error) {

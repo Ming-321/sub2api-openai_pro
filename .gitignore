@@ -131,8 +131,13 @@ docs/*
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
+!docs/plans/
+!docs/plans/*.md
 .serena/
 .codex/
 frontend/coverage/
 aicodex
 output/
+
+!scripts/
+!scripts/test-quota-share-upgrade.sh

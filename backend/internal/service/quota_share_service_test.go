@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/stretchr/testify/require"
 )
 
@@ -14,6 +15,7 @@ type quotaShareCacheStub struct {
 	saved       *QuotaShareGroupState
 	keyUsage    *QuotaShareKeyUsage
 	totalWeight int
+	localUSD    map[string]float64
 }
 
 func (c *quotaShareCacheStub) GetGroupState(ctx context.Context, groupID int64) (*QuotaShareGroupState, error) {
@@ -58,11 +60,50 @@ func (c *quotaShareCacheStub) DeleteTotalWeight(ctx context.Context, groupID int
 }
 
 func (c *quotaShareCacheStub) IncrLocalUSD(ctx context.Context, groupID int64, window string, cost float64) error {
+	if c.localUSD != nil {
+		c.localUSD[window] += cost
+	}
 	return nil
 }
 
 func (c *quotaShareCacheStub) GetAndResetLocalUSD(ctx context.Context, groupID int64, window string) (float64, error) {
-	return 0, nil
+	if c.localUSD == nil {
+		return 0, nil
+	}
+	value := c.localUSD[window]
+	c.localUSD[window] = 0
+	return value, nil
+}
+
+type quotaShareGroupRepoStub struct {
+	group           *Group
+	savedCalState   *domain.QuotaShareCalibrationState
+	savedEst5h      float64
+	savedEst7d      float64
+	updateCalls     int
+	updateStateOnly int
+}
+
+func (r *quotaShareGroupRepoStub) GetByIDLite(ctx context.Context, id int64) (*Group, error) {
+	if r.group == nil {
+		return nil, ErrGroupNotFound
+	}
+	copyGroup := *r.group
+	return &copyGroup, nil
+}
+
+func (r *quotaShareGroupRepoStub) UpdateQuotaShareEstimates(ctx context.Context, groupID int64, est5h, est7d float64, calState *domain.QuotaShareCalibrationState) error {
+	r.savedEst5h = est5h
+	r.savedEst7d = est7d
+	r.savedCalState = calState
+	r.updateCalls++
+	return nil
+}
+
+func (r *quotaShareGroupRepoStub) UpdateQuotaShareCalibrationState(ctx context.Context, groupID int64, calState *domain.QuotaShareCalibrationState) error {
+	r.savedCalState = calState
+	r.updateStateOnly++
+	return nil
 }
 
 type quotaShareUsageRepoStub struct {
@@ -285,4 +326,113 @@ func TestQuotaShareServiceUpdateGlobalWindowKeepsSmallDriftWindow(t *testing.T) 
 	require.Equal(t, existingStart, cache.saved.Window5hStart)
 	require.Equal(t, existingEnd, cache.saved.Window5hEnd)
 	require.InDelta(t, pct, cache.saved.Upstream5hPct, 1e-9)
+}
+
+func TestQuotaShareServiceTryCalibrateCreatesPendingSuggestion(t *testing.T) {
+	cache := &quotaShareCacheStub{
+		localUSD: map[string]float64{"5h": 2},
+	}
+	groupRepo := &quotaShareGroupRepoStub{
+		group: &Group{
+			ID:                  11,
+			Name:                "quota-share",
+			SubscriptionType:    SubscriptionTypeQuotaShare,
+			Estimated5hLimitUSD: 10,
+		},
+	}
+	svc := NewQuotaShareService(cache, groupRepo, nil, nil)
+	group := &Group{
+		ID:                  11,
+		Name:                "quota-share",
+		SubscriptionType:    SubscriptionTypeQuotaShare,
+		Estimated5hLimitUSD: 10,
+		CalibrationState: &domain.QuotaShareCalibrationState{
+			Window5h: &domain.QuotaShareCalibrationWindowState{
+				CurrentEstimateUSD: 10,
+				LastUpstreamPct:    10,
+				EMAAlpha:           0.3,
+			},
+		},
+	}
+	primaryPct := 20.0
+	resetAfter := 3600
+	windowMins := 300
+	snapshot := &OpenAICodexUsageSnapshot{
+		PrimaryUsedPercent:       &primaryPct,
+		PrimaryResetAfterSeconds: &resetAfter,
+		PrimaryWindowMinutes:     &windowMins,
+	}
+
+	svc.TryCalibrate(context.Background(), group, snapshot)
+
+	require.NotNil(t, groupRepo.savedCalState)
+	require.NotNil(t, groupRepo.savedCalState.Window5h)
+	require.NotNil(t, groupRepo.savedCalState.Window5h.PendingSuggestion)
+	require.Equal(t, domain.QuotaShareCalibrationSuggestionStatusPending, groupRepo.savedCalState.Window5h.PendingSuggestion.Status)
+	require.InDelta(t, 13.0, groupRepo.savedCalState.Window5h.PendingSuggestion.SuggestedEstimateUSD, 1e-9)
+	require.InDelta(t, 10.0, group.Estimated5hLimitUSD, 1e-9)
+	require.Equal(t, 1, groupRepo.updateStateOnly)
+}
+
+func TestQuotaShareServiceApplyAndDiscardCalibrationSuggestion(t *testing.T) {
+	now := time.Now()
+	pending := &domain.QuotaShareCalibrationSuggestion{
+		Window:               "5h",
+		Status:               domain.QuotaShareCalibrationSuggestionStatusPending,
+		SuggestedEstimateUSD: 18,
+		CurrentEstimateUSD:   10,
+		CalculatedAt:         &now,
+	}
+	group := &Group{
+		ID:                  21,
+		Name:                "quota-share",
+		SubscriptionType:    SubscriptionTypeQuotaShare,
+		Estimated5hLimitUSD: 10,
+		Estimated7dLimitUSD: 30,
+		CalibrationState: &domain.QuotaShareCalibrationState{
+			Window5h: &domain.QuotaShareCalibrationWindowState{
+				CurrentEstimateUSD: 10,
+				LastUpstreamPct:    10,
+				PendingSuggestion:  pending,
+			},
+			Window7d: &domain.QuotaShareCalibrationWindowState{
+				CurrentEstimateUSD: 30,
+				LastUpstreamPct:    20,
+			},
+		},
+	}
+	groupRepo := &quotaShareGroupRepoStub{group: group}
+	svc := NewQuotaShareService(&quotaShareCacheStub{}, groupRepo, nil, nil)
+
+	applied, err := svc.ApplyCalibrationSuggestion(context.Background(), group.ID, "5h")
+	require.NoError(t, err)
+	require.NotNil(t, applied)
+	require.InDelta(t, 18.0, groupRepo.savedEst5h, 1e-9)
+	require.InDelta(t, 30.0, groupRepo.savedEst7d, 1e-9)
+	require.Equal(t, domain.QuotaShareCalibrationSuggestionStatusApplied, groupRepo.savedCalState.Window5h.PendingSuggestion.Status)
+
+	discardPending := &domain.QuotaShareCalibrationSuggestion{
+		Window:               "7d",
+		Status:               domain.QuotaShareCalibrationSuggestionStatusPending,
+		SuggestedEstimateUSD: 50,
+		CurrentEstimateUSD:   30,
+	}
+	groupRepo.group = &Group{
+		ID:               22,
+		Name:             "quota-share-2",
+		SubscriptionType: SubscriptionTypeQuotaShare,
+		CalibrationState: &domain.QuotaShareCalibrationState{
+			Window7d: &domain.QuotaShareCalibrationWindowState{
+				CurrentEstimateUSD: 30,
+				PendingSuggestion:  discardPending,
+			},
+		},
+	}
+	groupRepo.savedCalState = nil
+
+	discarded, err := svc.DiscardCalibrationSuggestion(context.Background(), 22, "7d", "")
+	require.NoError(t, err)
+	require.NotNil(t, discarded)
+	require.Equal(t, domain.QuotaShareCalibrationSuggestionStatusDiscarded, groupRepo.savedCalState.Window7d.PendingSuggestion.Status)
+	require.NotEmpty(t, groupRepo.savedCalState.Window7d.PendingSuggestion.Reason)
 }

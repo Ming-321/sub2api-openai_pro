@@ -114,6 +114,85 @@
         </div>
 
         <section class="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-900">
+          <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">半自动校准建议</h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
+                系统只生成建议，不会自动改正式配额；限流和用户查询页仍使用当前正式配额。
+              </p>
+            </div>
+            <div class="flex gap-2">
+              <button class="btn btn-secondary" :disabled="loadingCalibration || !calibrationStatus?.has_pending" @click="discardCalibration('all')">
+                忽略建议
+              </button>
+              <button class="btn btn-primary" :disabled="loadingCalibration || !calibrationStatus?.has_pending" @click="applyCalibration('all')">
+                立即更新
+              </button>
+            </div>
+          </div>
+
+          <div class="mt-5 grid gap-4 md:grid-cols-2">
+            <div
+              v-for="window in calibrationWindows"
+              :key="window.window"
+              class="rounded-lg border border-gray-200 p-4 dark:border-dark-700"
+            >
+              <div class="flex items-center justify-between gap-3">
+                <div>
+                  <p class="text-sm font-medium text-gray-900 dark:text-white">{{ window.window }} 窗口</p>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+                    正式配额 {{ formatUSD(window.estimate) }}
+                  </p>
+                </div>
+                <span
+                  :class="[
+                    'inline-flex rounded-full px-2.5 py-1 text-xs font-medium',
+                    window.suggestion?.status === 'pending'
+                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                      : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300',
+                  ]"
+                >
+                  {{ suggestionLabel(window.suggestion?.status) }}
+                </span>
+              </div>
+
+              <div v-if="window.suggestion?.status === 'pending'" class="mt-4 space-y-2 text-sm text-gray-600 dark:text-dark-300">
+                <div class="flex justify-between gap-4">
+                  <span>建议配额</span>
+                  <span class="font-medium text-gray-900 dark:text-white">{{ formatUSD(window.suggestion.suggested_estimate_usd) }}</span>
+                </div>
+                <div class="flex justify-between gap-4">
+                  <span>变化比例</span>
+                  <span :class="estimateDeltaClass(window.suggestion)">
+                    {{ formatEstimateDelta(window.suggestion) }}
+                  </span>
+                </div>
+                <div class="flex justify-between gap-4">
+                  <span>本地采样</span>
+                  <span>{{ formatUSD(window.suggestion.local_usd) }}</span>
+                </div>
+                <div class="flex justify-between gap-4">
+                  <span>上游增量</span>
+                  <span>{{ formatPct(window.suggestion.upstream_pct_delta) }}</span>
+                </div>
+                <div class="flex gap-2 pt-2">
+                  <button class="btn btn-secondary btn-sm" :disabled="loadingCalibration" @click="discardCalibration(window.window as '5h' | '7d')">
+                    忽略
+                  </button>
+                  <button class="btn btn-primary btn-sm" :disabled="loadingCalibration" @click="applyCalibration(window.window as '5h' | '7d')">
+                    应用
+                  </button>
+                </div>
+              </div>
+
+              <p v-else class="mt-4 text-sm text-gray-500 dark:text-dark-400">
+                {{ window.suggestion?.reason || '暂无可应用建议，等待更多上游百分比和本地用量采样。' }}
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section class="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-900">
           <div class="flex items-center justify-between gap-3">
             <div>
               <h2 class="text-lg font-semibold text-gray-900 dark:text-white">下游 Key 分配明细</h2>
@@ -200,7 +279,12 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { adminAPI } from '@/api/admin'
-import type { AdminGroup, QuotaShareStatusResponse } from '@/types'
+import type {
+  AdminGroup,
+  QuotaShareCalibrationStatusResponse,
+  QuotaShareCalibrationSuggestion,
+  QuotaShareStatusResponse
+} from '@/types'
 import { useAppStore } from '@/stores/app'
 
 const appStore = useAppStore()
@@ -211,8 +295,10 @@ const groups = ref<AdminGroup[]>([])
 const selectedGroupId = ref<number | null>(null)
 const selectedGroup = ref<AdminGroup | null>(null)
 const status = ref<QuotaShareStatusResponse | null>(null)
+const calibrationStatus = ref<QuotaShareCalibrationStatusResponse | null>(null)
 const loadingGroups = ref(false)
 const loadingStatus = ref(false)
+const loadingCalibration = ref(false)
 
 const groupOptions = computed(() =>
   groups.value.map((group) => ({
@@ -234,6 +320,7 @@ const calibration5hCount = computed(() => calibration5h.value?.calibration_count
 const calibration7dCount = computed(() => calibration7d.value?.calibration_count ?? 0)
 const calibration5hEstimate = computed(() => calibration5h.value?.current_estimate_usd ?? 0)
 const calibration7dEstimate = computed(() => calibration7d.value?.current_estimate_usd ?? 0)
+const calibrationWindows = computed(() => calibrationStatus.value?.windows || [])
 const lastUpdatedLabel = computed(() => {
   const unix = status.value?.group_state?.uat
   return unix ? new Date(unix * 1000).toLocaleString() : ''
@@ -241,6 +328,36 @@ const lastUpdatedLabel = computed(() => {
 
 const formatUSD = (value?: number | null) => `$${Number(value || 0).toFixed(2)}`
 const formatPct = (value?: number | null) => `${Number(value || 0).toFixed(1)}%`
+
+const suggestionLabel = (status?: string | null) => {
+  switch (status) {
+    case 'pending':
+      return '建议更新'
+    case 'insufficient_data':
+      return '数据不足'
+    case 'rejected':
+      return '已拒绝'
+    case 'applied':
+      return '已应用'
+    case 'discarded':
+      return '已忽略'
+    default:
+      return '暂无建议'
+  }
+}
+
+const formatEstimateDelta = (suggestion?: QuotaShareCalibrationSuggestion | null) => {
+  if (!suggestion?.suggested_estimate_usd || !suggestion.current_estimate_usd) return '—'
+  const pct = ((suggestion.suggested_estimate_usd - suggestion.current_estimate_usd) / suggestion.current_estimate_usd) * 100
+  return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`
+}
+
+const estimateDeltaClass = (suggestion?: QuotaShareCalibrationSuggestion | null) => {
+  if (!suggestion?.suggested_estimate_usd || !suggestion.current_estimate_usd) return 'text-gray-500 dark:text-dark-400'
+  return suggestion.suggested_estimate_usd >= suggestion.current_estimate_usd
+    ? 'font-medium text-emerald-600 dark:text-emerald-400'
+    : 'font-medium text-amber-600 dark:text-amber-400'
+}
 
 const formatWindow = (start?: number, end?: number) => {
   if (!start && !end) return '窗口尚未初始化'
@@ -300,17 +417,49 @@ const loadGroups = async () => {
 const loadGroupStatus = async (groupId: number) => {
   loadingStatus.value = true
   try {
-    const [group, groupStatus] = await Promise.all([
+    const [group, groupStatus, groupCalibration] = await Promise.all([
       adminAPI.groups.getById(groupId),
       adminAPI.groups.getQuotaShareStatus(groupId),
+      adminAPI.groups.getQuotaShareCalibrationStatus(groupId),
     ])
     selectedGroup.value = group
     status.value = groupStatus
+    calibrationStatus.value = groupCalibration
   } catch (error) {
     console.error('Failed to load quota share status:', error)
     appStore.showError('加载 quota_share 状态失败')
   } finally {
     loadingStatus.value = false
+  }
+}
+
+const applyCalibration = async (window: '5h' | '7d' | 'all') => {
+  if (!selectedGroupId.value) return
+  loadingCalibration.value = true
+  try {
+    await adminAPI.groups.applyQuotaShareCalibration(selectedGroupId.value, window)
+    appStore.showSuccess('quota_share 校准建议已应用')
+    await loadGroupStatus(selectedGroupId.value)
+  } catch (error) {
+    console.error('Failed to apply quota share calibration:', error)
+    appStore.showError('应用 quota_share 校准建议失败')
+  } finally {
+    loadingCalibration.value = false
+  }
+}
+
+const discardCalibration = async (window: '5h' | '7d' | 'all') => {
+  if (!selectedGroupId.value) return
+  loadingCalibration.value = true
+  try {
+    await adminAPI.groups.discardQuotaShareCalibration(selectedGroupId.value, window)
+    appStore.showSuccess('quota_share 校准建议已忽略')
+    await loadGroupStatus(selectedGroupId.value)
+  } catch (error) {
+    console.error('Failed to discard quota share calibration:', error)
+    appStore.showError('忽略 quota_share 校准建议失败')
+  } finally {
+    loadingCalibration.value = false
   }
 }
 
@@ -326,6 +475,7 @@ watch(selectedGroupId, async (groupId) => {
   if (!groupId) {
     selectedGroup.value = null
     status.value = null
+    calibrationStatus.value = null
     return
   }
   await loadGroupStatus(groupId)

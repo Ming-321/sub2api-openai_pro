@@ -1,4 +1,4 @@
-.PHONY: build build-backend build-frontend build-datamanagementd test test-backend test-frontend test-frontend-critical test-datamanagementd secret-scan
+.PHONY: build build-backend build-frontend build-datamanagementd test test-backend test-frontend test-frontend-critical test-quota-share-upgrade test-datamanagementd secret-scan
 
 FRONTEND_CRITICAL_VITEST := \
 	src/views/auth/__tests__/LinuxDoCallbackView.spec.ts \
@@ -36,6 +36,9 @@ test-frontend:
 
 test-frontend-critical:
 	@pnpm --dir frontend exec vitest run $(FRONTEND_CRITICAL_VITEST)
+
+test-quota-share-upgrade:
+	@scripts/test-quota-share-upgrade.sh
 
 test-datamanagementd:
 	@cd datamanagement && go test ./...
