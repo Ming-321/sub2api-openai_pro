@@ -10,6 +10,7 @@ import (
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -314,7 +315,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				Account:               account,
 				Subscription:          activeSubscription,
 				InboundEndpoint:       GetInboundEndpoint(c),
-				UpstreamEndpoint:      GetUpstreamEndpoint(c, account.Platform),
+				UpstreamEndpoint:      resolveRawCCUpstreamEndpoint(c, account),
 				UserAgent:             userAgent,
 				IPAddress:             clientIP,
 				OverflowedFromGroupID: overflowedFromGroupID,
@@ -337,4 +338,17 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		)
 		return
 	}
+}
+
+// resolveRawCCUpstreamEndpoint returns the actual upstream endpoint for
+// OpenAI Chat Completions requests. For APIKey accounts whose upstream
+// has been probed to not support the Responses API, the request is
+// forwarded directly to /v1/chat/completions — not through the default
+// CC→Responses conversion path.
+func resolveRawCCUpstreamEndpoint(c *gin.Context, account *service.Account) string {
+	if account != nil && account.Type == service.AccountTypeAPIKey &&
+		!openai_compat.ShouldUseResponsesAPI(account.Extra) {
+		return "/v1/chat/completions"
+	}
+	return GetUpstreamEndpoint(c, account.Platform)
 }
