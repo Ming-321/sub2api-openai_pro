@@ -1,0 +1,438 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/domain"
+	"github.com/stretchr/testify/require"
+)
+
+type quotaShareCacheStub struct {
+	state       *QuotaShareGroupState
+	saved       *QuotaShareGroupState
+	keyUsage    *QuotaShareKeyUsage
+	totalWeight int
+	localUSD    map[string]float64
+}
+
+func (c *quotaShareCacheStub) GetGroupState(ctx context.Context, groupID int64) (*QuotaShareGroupState, error) {
+	return c.state, nil
+}
+
+func (c *quotaShareCacheStub) SetGroupState(ctx context.Context, groupID int64, state *QuotaShareGroupState) error {
+	if state == nil {
+		c.saved = nil
+		return nil
+	}
+	copyState := *state
+	c.saved = &copyState
+	c.state = &copyState
+	return nil
+}
+
+func (c *quotaShareCacheStub) GetKeyUsage(ctx context.Context, groupID, keyID int64) (*QuotaShareKeyUsage, error) {
+	if c.keyUsage == nil {
+		return nil, nil
+	}
+	copyUsage := *c.keyUsage
+	return &copyUsage, nil
+}
+
+func (c *quotaShareCacheStub) IncrKeyUsage(ctx context.Context, groupID, keyID int64, cost float64, window5hEnd, window7dEnd int64) (*QuotaShareKeyUsage, error) {
+	return c.GetKeyUsage(ctx, groupID, keyID)
+}
+
+func (c *quotaShareCacheStub) GetTotalWeight(ctx context.Context, groupID int64) (int, error) {
+	return c.totalWeight, nil
+}
+
+func (c *quotaShareCacheStub) SetTotalWeight(ctx context.Context, groupID int64, total int) error {
+	c.totalWeight = total
+	return nil
+}
+
+func (c *quotaShareCacheStub) DeleteTotalWeight(ctx context.Context, groupID int64) error {
+	c.totalWeight = 0
+	return nil
+}
+
+func (c *quotaShareCacheStub) IncrLocalUSD(ctx context.Context, groupID int64, window string, cost float64) error {
+	if c.localUSD != nil {
+		c.localUSD[window] += cost
+	}
+	return nil
+}
+
+func (c *quotaShareCacheStub) GetAndResetLocalUSD(ctx context.Context, groupID int64, window string) (float64, error) {
+	if c.localUSD == nil {
+		return 0, nil
+	}
+	value := c.localUSD[window]
+	c.localUSD[window] = 0
+	return value, nil
+}
+
+type quotaShareGroupRepoStub struct {
+	group           *Group
+	savedCalState   *domain.QuotaShareCalibrationState
+	savedEst5h      float64
+	savedEst7d      float64
+	updateCalls     int
+	updateStateOnly int
+}
+
+func (r *quotaShareGroupRepoStub) GetByIDLite(ctx context.Context, id int64) (*Group, error) {
+	if r.group == nil {
+		return nil, ErrGroupNotFound
+	}
+	copyGroup := *r.group
+	return &copyGroup, nil
+}
+
+func (r *quotaShareGroupRepoStub) UpdateQuotaShareEstimates(ctx context.Context, groupID int64, est5h, est7d float64, calState *domain.QuotaShareCalibrationState) error {
+	r.savedEst5h = est5h
+	r.savedEst7d = est7d
+	r.savedCalState = calState
+	r.updateCalls++
+	return nil
+}
+
+func (r *quotaShareGroupRepoStub) UpdateQuotaShareCalibrationState(ctx context.Context, groupID int64, calState *domain.QuotaShareCalibrationState) error {
+	r.savedCalState = calState
+	r.updateStateOnly++
+	return nil
+}
+
+type quotaShareUsageRepoStub struct {
+	calls        []windowQuery
+	usageByStart map[int64]float64
+	err          error
+}
+
+type windowQuery struct {
+	apiKeyID int64
+	start    time.Time
+	end      time.Time
+}
+
+func (r *quotaShareUsageRepoStub) SumAPIKeyActualCostInWindow(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) (float64, error) {
+	r.calls = append(r.calls, windowQuery{apiKeyID: apiKeyID, start: startTime, end: endTime})
+	if r.err != nil {
+		return 0, r.err
+	}
+	if r.usageByStart != nil {
+		return r.usageByStart[startTime.Unix()], nil
+	}
+	switch startTime.Unix() {
+	case 1719990000:
+		return 1.25, nil
+	case 1720594800:
+		return 4.75, nil
+	default:
+		return 0.5, nil
+	}
+}
+
+func TestQuotaShareServiceGetKeyUsageUsesDBWindowTotals(t *testing.T) {
+	cache := &quotaShareCacheStub{
+		state: &QuotaShareGroupState{
+			Window5hStart: 1719990000,
+			Window5hEnd:   1720008000,
+			Window7dStart: 1720594800,
+			Window7dEnd:   1721203200,
+		},
+	}
+	usageRepo := &quotaShareUsageRepoStub{}
+	svc := NewQuotaShareService(cache, nil, nil, usageRepo)
+
+	apiKey := &APIKey{ID: 88}
+	group := &Group{ID: 7, SubscriptionType: SubscriptionTypeQuotaShare}
+
+	usage, err := svc.GetKeyUsage(context.Background(), apiKey, group)
+	require.NoError(t, err)
+	require.NotNil(t, usage)
+	require.InDelta(t, 1.25, usage.Usage5h, 1e-9)
+	require.InDelta(t, 4.75, usage.Usage7d, 1e-9)
+	require.Len(t, usageRepo.calls, 2)
+	require.Equal(t, int64(88), usageRepo.calls[0].apiKeyID)
+	require.Equal(t, time.Unix(1719990000, 0), usageRepo.calls[0].start)
+	require.Equal(t, time.Unix(1720008000, 0), usageRepo.calls[0].end)
+	require.Equal(t, time.Unix(1720594800, 0), usageRepo.calls[1].start)
+	require.Equal(t, time.Unix(1721203200, 0), usageRepo.calls[1].end)
+}
+
+func TestQuotaShareServiceCheckLimitsUsesMaxOfRedisAndDBFor5h(t *testing.T) {
+	now := time.Now().Unix()
+	state := &QuotaShareGroupState{
+		Window5hStart:       now - int64(time.Hour/time.Second),
+		Window5hEnd:         now + int64(time.Hour/time.Second),
+		Window7dStart:       now - int64((2*time.Hour)/time.Second),
+		Window7dEnd:         now + int64(time.Hour/time.Second),
+		Estimated5hLimitUSD: 10,
+		Estimated7dLimitUSD: 100,
+	}
+	group := &Group{ID: 7, SubscriptionType: SubscriptionTypeQuotaShare}
+	apiKey := &APIKey{ID: 88, QuotaWeight: 1}
+
+	t.Run("db_exceeds_when_redis_is_lower", func(t *testing.T) {
+		cache := &quotaShareCacheStub{
+			state:       state,
+			keyUsage:    &QuotaShareKeyUsage{Usage5h: 5, Usage7d: 1},
+			totalWeight: 1,
+		}
+		usageRepo := &quotaShareUsageRepoStub{usageByStart: map[int64]float64{
+			state.Window5hStart: 10,
+			state.Window7dStart: 1,
+		}}
+		svc := NewQuotaShareService(cache, nil, nil, usageRepo)
+
+		err := svc.CheckLimits(context.Background(), apiKey, group)
+		require.ErrorIs(t, err, ErrQuotaShare5hExceeded)
+		require.Len(t, usageRepo.calls, 1)
+	})
+
+	t.Run("redis_exceeds_when_db_is_lower", func(t *testing.T) {
+		cache := &quotaShareCacheStub{
+			state:       state,
+			keyUsage:    &QuotaShareKeyUsage{Usage5h: 10, Usage7d: 1},
+			totalWeight: 1,
+		}
+		usageRepo := &quotaShareUsageRepoStub{usageByStart: map[int64]float64{
+			state.Window5hStart: 5,
+			state.Window7dStart: 1,
+		}}
+		svc := NewQuotaShareService(cache, nil, nil, usageRepo)
+
+		err := svc.CheckLimits(context.Background(), apiKey, group)
+		require.ErrorIs(t, err, ErrQuotaShare5hExceeded)
+		require.Len(t, usageRepo.calls, 1)
+	})
+
+	t.Run("both_below_limit_allows", func(t *testing.T) {
+		cache := &quotaShareCacheStub{
+			state:       state,
+			keyUsage:    &QuotaShareKeyUsage{Usage5h: 4, Usage7d: 1},
+			totalWeight: 1,
+		}
+		usageRepo := &quotaShareUsageRepoStub{usageByStart: map[int64]float64{
+			state.Window5hStart: 6,
+			state.Window7dStart: 1,
+		}}
+		svc := NewQuotaShareService(cache, nil, nil, usageRepo)
+
+		err := svc.CheckLimits(context.Background(), apiKey, group)
+		require.NoError(t, err)
+		require.Len(t, usageRepo.calls, 2)
+	})
+}
+
+func TestQuotaShareServiceCheckLimitsDBFailureFallsBackToRedis(t *testing.T) {
+	now := time.Now().Unix()
+	state := &QuotaShareGroupState{
+		Window5hStart:       now - int64(time.Hour/time.Second),
+		Window5hEnd:         now + int64(time.Hour/time.Second),
+		Estimated5hLimitUSD: 10,
+	}
+	group := &Group{ID: 7, SubscriptionType: SubscriptionTypeQuotaShare}
+	apiKey := &APIKey{ID: 88, QuotaWeight: 1}
+	dbErr := errors.New("db temporarily unavailable")
+
+	t.Run("redis_below_allows", func(t *testing.T) {
+		cache := &quotaShareCacheStub{
+			state:       state,
+			keyUsage:    &QuotaShareKeyUsage{Usage5h: 9},
+			totalWeight: 1,
+		}
+		svc := NewQuotaShareService(cache, nil, nil, &quotaShareUsageRepoStub{err: dbErr})
+
+		err := svc.CheckLimits(context.Background(), apiKey, group)
+		require.NoError(t, err)
+	})
+
+	t.Run("redis_exceeds_blocks", func(t *testing.T) {
+		cache := &quotaShareCacheStub{
+			state:       state,
+			keyUsage:    &QuotaShareKeyUsage{Usage5h: 10},
+			totalWeight: 1,
+		}
+		svc := NewQuotaShareService(cache, nil, nil, &quotaShareUsageRepoStub{err: dbErr})
+
+		err := svc.CheckLimits(context.Background(), apiKey, group)
+		require.ErrorIs(t, err, ErrQuotaShare5hExceeded)
+	})
+}
+
+func TestQuotaShareServiceCheckLimitsUsesMaxOfRedisAndDBFor7d(t *testing.T) {
+	now := time.Now().Unix()
+	state := &QuotaShareGroupState{
+		Window5hStart:       now - int64(time.Hour/time.Second),
+		Window5hEnd:         now + int64(time.Hour/time.Second),
+		Window7dStart:       now - int64((2*time.Hour)/time.Second),
+		Window7dEnd:         now + int64(time.Hour/time.Second),
+		Estimated5hLimitUSD: 100,
+		Estimated7dLimitUSD: 10,
+	}
+	group := &Group{ID: 7, SubscriptionType: SubscriptionTypeQuotaShare}
+	apiKey := &APIKey{ID: 88, QuotaWeight: 1}
+	cache := &quotaShareCacheStub{
+		state:       state,
+		keyUsage:    &QuotaShareKeyUsage{Usage5h: 1, Usage7d: 5},
+		totalWeight: 1,
+	}
+	usageRepo := &quotaShareUsageRepoStub{usageByStart: map[int64]float64{
+		state.Window5hStart: 1,
+		state.Window7dStart: 10,
+	}}
+	svc := NewQuotaShareService(cache, nil, nil, usageRepo)
+
+	err := svc.CheckLimits(context.Background(), apiKey, group)
+	require.ErrorIs(t, err, ErrQuotaShare7dExceeded)
+	require.Len(t, usageRepo.calls, 2)
+}
+
+func TestQuotaShareServiceUpdateGlobalWindowKeepsSmallDriftWindow(t *testing.T) {
+	now := time.Now()
+	existingEnd := now.Add(5*time.Hour + 10*time.Second).Unix()
+	existingStart := existingEnd - int64((5*time.Hour)/time.Second)
+	cache := &quotaShareCacheStub{
+		state: &QuotaShareGroupState{
+			Window5hStart: existingStart,
+			Window5hEnd:   existingEnd,
+			Upstream5hPct: 12.5,
+		},
+	}
+	svc := NewQuotaShareService(cache, nil, nil, nil)
+	group := &Group{
+		ID:                  9,
+		SubscriptionType:    SubscriptionTypeQuotaShare,
+		Estimated5hLimitUSD: 100,
+		Estimated7dLimitUSD: 200,
+	}
+	pct := 17.5
+	resetAfter := 5 * 60 * 60
+	windowMinutes := 300
+	snapshot := &OpenAICodexUsageSnapshot{
+		PrimaryUsedPercent:       &pct,
+		PrimaryResetAfterSeconds: &resetAfter,
+		PrimaryWindowMinutes:     &windowMinutes,
+	}
+
+	svc.UpdateGlobalWindow(context.Background(), group, snapshot)
+
+	require.NotNil(t, cache.saved)
+	require.Equal(t, existingStart, cache.saved.Window5hStart)
+	require.Equal(t, existingEnd, cache.saved.Window5hEnd)
+	require.InDelta(t, pct, cache.saved.Upstream5hPct, 1e-9)
+}
+
+func TestQuotaShareServiceTryCalibrateCreatesPendingSuggestion(t *testing.T) {
+	cache := &quotaShareCacheStub{
+		localUSD: map[string]float64{"5h": 2},
+	}
+	groupRepo := &quotaShareGroupRepoStub{
+		group: &Group{
+			ID:                  11,
+			Name:                "quota-share",
+			SubscriptionType:    SubscriptionTypeQuotaShare,
+			Estimated5hLimitUSD: 10,
+		},
+	}
+	svc := NewQuotaShareService(cache, groupRepo, nil, nil)
+	group := &Group{
+		ID:                  11,
+		Name:                "quota-share",
+		SubscriptionType:    SubscriptionTypeQuotaShare,
+		Estimated5hLimitUSD: 10,
+		CalibrationState: &domain.QuotaShareCalibrationState{
+			Window5h: &domain.QuotaShareCalibrationWindowState{
+				CurrentEstimateUSD: 10,
+				LastUpstreamPct:    10,
+				EMAAlpha:           0.3,
+			},
+		},
+	}
+	primaryPct := 20.0
+	resetAfter := 3600
+	windowMins := 300
+	snapshot := &OpenAICodexUsageSnapshot{
+		PrimaryUsedPercent:       &primaryPct,
+		PrimaryResetAfterSeconds: &resetAfter,
+		PrimaryWindowMinutes:     &windowMins,
+	}
+
+	svc.TryCalibrate(context.Background(), group, snapshot)
+
+	require.NotNil(t, groupRepo.savedCalState)
+	require.NotNil(t, groupRepo.savedCalState.Window5h)
+	require.NotNil(t, groupRepo.savedCalState.Window5h.PendingSuggestion)
+	require.Equal(t, domain.QuotaShareCalibrationSuggestionStatusPending, groupRepo.savedCalState.Window5h.PendingSuggestion.Status)
+	require.InDelta(t, 13.0, groupRepo.savedCalState.Window5h.PendingSuggestion.SuggestedEstimateUSD, 1e-9)
+	require.InDelta(t, 10.0, group.Estimated5hLimitUSD, 1e-9)
+	require.Equal(t, 1, groupRepo.updateStateOnly)
+}
+
+func TestQuotaShareServiceApplyAndDiscardCalibrationSuggestion(t *testing.T) {
+	now := time.Now()
+	pending := &domain.QuotaShareCalibrationSuggestion{
+		Window:               "5h",
+		Status:               domain.QuotaShareCalibrationSuggestionStatusPending,
+		SuggestedEstimateUSD: 18,
+		CurrentEstimateUSD:   10,
+		CalculatedAt:         &now,
+	}
+	group := &Group{
+		ID:                  21,
+		Name:                "quota-share",
+		SubscriptionType:    SubscriptionTypeQuotaShare,
+		Estimated5hLimitUSD: 10,
+		Estimated7dLimitUSD: 30,
+		CalibrationState: &domain.QuotaShareCalibrationState{
+			Window5h: &domain.QuotaShareCalibrationWindowState{
+				CurrentEstimateUSD: 10,
+				LastUpstreamPct:    10,
+				PendingSuggestion:  pending,
+			},
+			Window7d: &domain.QuotaShareCalibrationWindowState{
+				CurrentEstimateUSD: 30,
+				LastUpstreamPct:    20,
+			},
+		},
+	}
+	groupRepo := &quotaShareGroupRepoStub{group: group}
+	svc := NewQuotaShareService(&quotaShareCacheStub{}, groupRepo, nil, nil)
+
+	applied, err := svc.ApplyCalibrationSuggestion(context.Background(), group.ID, "5h")
+	require.NoError(t, err)
+	require.NotNil(t, applied)
+	require.InDelta(t, 18.0, groupRepo.savedEst5h, 1e-9)
+	require.InDelta(t, 30.0, groupRepo.savedEst7d, 1e-9)
+	require.Equal(t, domain.QuotaShareCalibrationSuggestionStatusApplied, groupRepo.savedCalState.Window5h.PendingSuggestion.Status)
+
+	discardPending := &domain.QuotaShareCalibrationSuggestion{
+		Window:               "7d",
+		Status:               domain.QuotaShareCalibrationSuggestionStatusPending,
+		SuggestedEstimateUSD: 50,
+		CurrentEstimateUSD:   30,
+	}
+	groupRepo.group = &Group{
+		ID:               22,
+		Name:             "quota-share-2",
+		SubscriptionType: SubscriptionTypeQuotaShare,
+		CalibrationState: &domain.QuotaShareCalibrationState{
+			Window7d: &domain.QuotaShareCalibrationWindowState{
+				CurrentEstimateUSD: 30,
+				PendingSuggestion:  discardPending,
+			},
+		},
+	}
+	groupRepo.savedCalState = nil
+
+	discarded, err := svc.DiscardCalibrationSuggestion(context.Background(), 22, "7d", "")
+	require.NoError(t, err)
+	require.NotNil(t, discarded)
+	require.Equal(t, domain.QuotaShareCalibrationSuggestionStatusDiscarded, groupRepo.savedCalState.Window7d.PendingSuggestion.Status)
+	require.NotEmpty(t, groupRepo.savedCalState.Window7d.PendingSuggestion.Reason)
+}

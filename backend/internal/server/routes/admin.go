@@ -242,6 +242,7 @@ func registerGroupRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		groups.GET("/all", h.Admin.Group.GetAll)
 		groups.GET("/usage-summary", h.Admin.Group.GetUsageSummary)
 		groups.GET("/capacity-summary", h.Admin.Group.GetCapacitySummary)
+		groups.GET("/quota-share-calibration-reminder", h.Admin.Group.GetQuotaShareCalibrationReminder)
 		groups.PUT("/sort-order", h.Admin.Group.UpdateSortOrder)
 		groups.GET("/:id", h.Admin.Group.GetByID)
 		groups.POST("", h.Admin.Group.Create)
@@ -254,6 +255,10 @@ func registerGroupRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		groups.PUT("/:id/rpm-overrides", h.Admin.Group.BatchSetGroupRPMOverrides)
 		groups.DELETE("/:id/rpm-overrides", h.Admin.Group.ClearGroupRPMOverrides)
 		groups.GET("/:id/api-keys", h.Admin.Group.GetGroupAPIKeys)
+		groups.GET("/:id/quota-share-status", h.Admin.Group.GetQuotaShareStatus)
+		groups.GET("/:id/quota-share-calibration", h.Admin.Group.GetQuotaShareCalibrationStatus)
+		groups.POST("/:id/quota-share-calibration/apply", h.Admin.Group.ApplyQuotaShareCalibrationSuggestion)
+		groups.POST("/:id/quota-share-calibration/discard", h.Admin.Group.DiscardQuotaShareCalibrationSuggestion)
 	}
 }
 
@@ -602,11 +607,16 @@ func registerChannelMonitorRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 func registerAffiliateRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	affiliates := admin.Group("/affiliates")
 	{
+		affiliates.GET("/invites", h.Admin.Affiliate.ListInviteRecords)
+		affiliates.GET("/rebates", h.Admin.Affiliate.ListRebateRecords)
+		affiliates.GET("/transfers", h.Admin.Affiliate.ListTransferRecords)
+
 		users := affiliates.Group("/users")
 		{
 			users.GET("", h.Admin.Affiliate.ListUsers)
 			users.GET("/lookup", h.Admin.Affiliate.LookupUsers)
 			users.POST("/batch-rate", h.Admin.Affiliate.BatchSetRate)
+			users.GET("/:user_id/overview", h.Admin.Affiliate.GetUserOverview)
 			users.PUT("/:user_id", h.Admin.Affiliate.UpdateUserSettings)
 			users.DELETE("/:user_id", h.Admin.Affiliate.ClearUserSettings)
 		}

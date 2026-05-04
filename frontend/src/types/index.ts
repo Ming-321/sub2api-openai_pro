@@ -470,7 +470,40 @@ export interface PaginationConfig {
 
 export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity'
 
-export type SubscriptionType = 'standard' | 'subscription'
+export type SubscriptionType = 'standard' | 'subscription' | 'quota_share'
+
+export interface QuotaShareCalibrationWindowState {
+  calibration_count?: number
+  current_estimate_usd?: number
+  last_upstream_pct?: number
+  last_local_usd?: number
+  ema_alpha?: number
+  last_calibration_at?: string | null
+  pending_suggestion?: QuotaShareCalibrationSuggestion | null
+}
+
+export interface QuotaShareCalibrationSuggestion {
+  window: '5h' | '7d' | string
+  status: 'pending' | 'insufficient_data' | 'rejected' | 'applied' | 'discarded' | string
+  reason?: string
+  suggested_estimate_usd?: number
+  current_estimate_usd: number
+  local_usd?: number
+  upstream_pct_start: number
+  upstream_pct_current: number
+  upstream_pct_delta: number
+  ema_alpha?: number
+  calculated_at?: string | null
+  applied_at?: string | null
+  discarded_at?: string | null
+}
+
+export interface QuotaShareCalibrationState {
+  '5h'?: QuotaShareCalibrationWindowState
+  '7d'?: QuotaShareCalibrationWindowState
+  window_5h?: QuotaShareCalibrationWindowState
+  window_7d?: QuotaShareCalibrationWindowState
+}
 
 export interface OpenAIMessagesDispatchModelConfig {
   opus_mapped_model?: string
@@ -532,6 +565,11 @@ export interface AdminGroup extends Group {
 
   // 分组排序
   sort_order: number
+
+  // Quota Share fields
+  estimated_5h_limit_usd?: number
+  estimated_7d_limit_usd?: number
+  calibration_state?: QuotaShareCalibrationState | null
 }
 
 export interface ApiKey {
@@ -540,6 +578,7 @@ export interface ApiKey {
   key: string
   name: string
   group_id: number | null
+  quota_share_overflow_group_id?: number | null
   status: 'active' | 'inactive' | 'quota_exhausted' | 'expired'
   ip_whitelist: string[]
   ip_blacklist: string[]
@@ -562,6 +601,7 @@ export interface ApiKey {
   reset_5h_at: string | null
   reset_1d_at: string | null
   reset_7d_at: string | null
+  quota_weight?: number
 }
 
 export interface CreateApiKeyRequest {
@@ -614,6 +654,8 @@ export interface CreateGroupRequest {
   require_privacy_set?: boolean
   // 从指定分组复制账号
   copy_accounts_from_group_ids?: number[]
+  estimated_5h_limit_usd?: number | null
+  estimated_7d_limit_usd?: number | null
 }
 
 export interface UpdateGroupRequest {
@@ -638,6 +680,66 @@ export interface UpdateGroupRequest {
   require_oauth_only?: boolean
   require_privacy_set?: boolean
   copy_accounts_from_group_ids?: number[]
+  estimated_5h_limit_usd?: number | null
+  estimated_7d_limit_usd?: number | null
+}
+
+export interface QuotaShareGroupState {
+  w5s?: number
+  w5e?: number
+  w7s?: number
+  w7e?: number
+  u5p?: number
+  u7p?: number
+  uat?: number
+  e5?: number
+  e7?: number
+}
+
+export interface QuotaShareKeyStatus {
+  key_id: number
+  key_name: string
+  status: string
+  quota_weight: number
+  limit_5h: number
+  limit_7d: number
+  usage_5h: number
+  usage_7d: number
+}
+
+export interface QuotaShareStatusResponse {
+  group_state: QuotaShareGroupState | null
+  total_weight: number
+  keys: QuotaShareKeyStatus[]
+}
+
+export interface QuotaShareCalibrationWindowView {
+  window: '5h' | '7d' | string
+  estimate: number
+  suggestion?: QuotaShareCalibrationSuggestion | null
+  state?: QuotaShareCalibrationWindowState | null
+}
+
+export interface QuotaShareCalibrationStatusResponse {
+  group_id: number
+  group_name: string
+  has_pending: boolean
+  windows: QuotaShareCalibrationWindowView[]
+}
+
+export interface QuotaShareCalibrationReminderGroup {
+  group_id: number
+  group_name: string
+  status: string
+  reason?: string
+  has_pending: boolean
+}
+
+export interface QuotaShareCalibrationReminderResponse {
+  has_quota_share: boolean
+  pending_count: number
+  unavailable_count: number
+  groups: QuotaShareCalibrationReminderGroup[]
 }
 
 // ==================== Account & Proxy Types ====================

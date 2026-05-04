@@ -46,20 +46,21 @@ type AdminUser struct {
 }
 
 type APIKey struct {
-	ID          int64      `json:"id"`
-	UserID      int64      `json:"user_id"`
-	Key         string     `json:"key"`
-	Name        string     `json:"name"`
-	GroupID     *int64     `json:"group_id"`
-	Status      string     `json:"status"`
-	IPWhitelist []string   `json:"ip_whitelist"`
-	IPBlacklist []string   `json:"ip_blacklist"`
-	LastUsedAt  *time.Time `json:"last_used_at"`
-	Quota       float64    `json:"quota"`      // Quota limit in USD (0 = unlimited)
-	QuotaUsed   float64    `json:"quota_used"` // Used quota amount in USD
-	ExpiresAt   *time.Time `json:"expires_at"` // Expiration time (nil = never expires)
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID                        int64      `json:"id"`
+	UserID                    int64      `json:"user_id"`
+	Key                       string     `json:"key"`
+	Name                      string     `json:"name"`
+	GroupID                   *int64     `json:"group_id"`
+	QuotaShareOverflowGroupID *int64     `json:"quota_share_overflow_group_id"`
+	Status                    string     `json:"status"`
+	IPWhitelist               []string   `json:"ip_whitelist"`
+	IPBlacklist               []string   `json:"ip_blacklist"`
+	LastUsedAt                *time.Time `json:"last_used_at"`
+	Quota                     float64    `json:"quota"`      // Quota limit in USD (0 = unlimited)
+	QuotaUsed                 float64    `json:"quota_used"` // Used quota amount in USD
+	ExpiresAt                 *time.Time `json:"expires_at"` // Expiration time (nil = never expires)
+	CreatedAt                 time.Time  `json:"created_at"`
+	UpdatedAt                 time.Time  `json:"updated_at"`
 
 	// Rate limit fields
 	RateLimit5h   float64    `json:"rate_limit_5h"`
@@ -74,6 +75,9 @@ type APIKey struct {
 	Reset5hAt     *time.Time `json:"reset_5h_at,omitempty"`
 	Reset1dAt     *time.Time `json:"reset_1d_at,omitempty"`
 	Reset7dAt     *time.Time `json:"reset_7d_at,omitempty"`
+
+	// Quota share weight (only meaningful for quota_share groups)
+	QuotaWeight int `json:"quota_weight,omitempty"`
 
 	User  *User  `json:"user,omitempty"`
 	Group *Group `json:"group,omitempty"`
@@ -143,6 +147,11 @@ type AdminGroup struct {
 
 	// 分组排序
 	SortOrder int `json:"sort_order"`
+
+	// Quota Share fields (read-only in response)
+	Estimated5hLimitUSD float64                            `json:"estimated_5h_limit_usd,omitempty"`
+	Estimated7dLimitUSD float64                            `json:"estimated_7d_limit_usd,omitempty"`
+	CalibrationState    *domain.QuotaShareCalibrationState `json:"calibration_state,omitempty"`
 }
 
 type Account struct {
@@ -370,8 +379,9 @@ type UsageLog struct {
 	// UpstreamEndpoint is the normalized upstream endpoint path, e.g. /v1/responses.
 	UpstreamEndpoint *string `json:"upstream_endpoint,omitempty"`
 
-	GroupID        *int64 `json:"group_id"`
-	SubscriptionID *int64 `json:"subscription_id"`
+	GroupID               *int64 `json:"group_id"`
+	OverflowedFromGroupID *int64 `json:"overflowed_from_group_id,omitempty"`
+	SubscriptionID        *int64 `json:"subscription_id"`
 
 	InputTokens         int `json:"input_tokens"`
 	OutputTokens        int `json:"output_tokens"`

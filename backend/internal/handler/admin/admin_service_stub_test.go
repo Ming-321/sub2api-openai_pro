@@ -605,5 +605,35 @@ func (s *stubAdminService) ReplaceUserGroup(ctx context.Context, userID, oldGrou
 	return &service.ReplaceUserGroupResult{MigratedKeys: 0}, nil
 }
 
+func (s *stubAdminService) SetQuotaShareService(qs *service.QuotaShareService) {}
+
+func (s *stubAdminService) GetQuotaShareStatus(ctx context.Context, groupID int64) (*service.QuotaShareStatusResponse, error) {
+	return nil, nil
+}
+
+func (s *stubAdminService) GetQuotaShareCalibrationStatus(ctx context.Context, groupID int64) (*service.QuotaShareCalibrationStatusResponse, error) {
+	return nil, nil
+}
+
+func (s *stubAdminService) ApplyQuotaShareCalibrationSuggestion(ctx context.Context, groupID int64, window string) (*service.Group, error) {
+	return &service.Group{ID: groupID, SubscriptionType: service.SubscriptionTypeQuotaShare}, nil
+}
+
+func (s *stubAdminService) DiscardQuotaShareCalibrationSuggestion(ctx context.Context, groupID int64, window, reason string) (*service.Group, error) {
+	return &service.Group{ID: groupID, SubscriptionType: service.SubscriptionTypeQuotaShare}, nil
+}
+
+func (s *stubAdminService) GetQuotaShareCalibrationReminder(ctx context.Context) (*service.QuotaShareCalibrationReminderResponse, error) {
+	return &service.QuotaShareCalibrationReminderResponse{}, nil
+}
+
+func (s *stubAdminService) AdminUpdateAPIKeyQuotaWeight(ctx context.Context, keyID int64, weight int) (*service.APIKey, error) {
+	return &service.APIKey{ID: keyID, QuotaWeight: weight}, nil
+}
+
+func (s *stubAdminService) AdminUpdateAPIKeyQuotaShareOverflowGroupID(ctx context.Context, keyID int64, groupID *int64) (*service.APIKey, error) {
+	return &service.APIKey{ID: keyID, QuotaShareOverflowGroupID: groupID}, nil
+}
+
 // Ensure stub implements interface.
 var _ service.AdminService = (*stubAdminService)(nil)

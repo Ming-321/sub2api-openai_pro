@@ -195,6 +195,16 @@ func RpmLimit(v int) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldRpmLimit, v))
 }
 
+// Estimated5hLimitUsd applies equality check predicate on the "estimated_5h_limit_usd" field. It's identical to Estimated5hLimitUsdEQ.
+func Estimated5hLimitUsd(v float64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldEstimated5hLimitUsd, v))
+}
+
+// Estimated7dLimitUsd applies equality check predicate on the "estimated_7d_limit_usd" field. It's identical to Estimated7dLimitUsdEQ.
+func Estimated7dLimitUsd(v float64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldEstimated7dLimitUsd, v))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldCreatedAt, v))
@@ -1363,6 +1373,96 @@ func RpmLimitLT(v int) predicate.Group {
 // RpmLimitLTE applies the LTE predicate on the "rpm_limit" field.
 func RpmLimitLTE(v int) predicate.Group {
 	return predicate.Group(sql.FieldLTE(FieldRpmLimit, v))
+}
+
+// Estimated5hLimitUsdEQ applies the EQ predicate on the "estimated_5h_limit_usd" field.
+func Estimated5hLimitUsdEQ(v float64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldEstimated5hLimitUsd, v))
+}
+
+// Estimated5hLimitUsdNEQ applies the NEQ predicate on the "estimated_5h_limit_usd" field.
+func Estimated5hLimitUsdNEQ(v float64) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldEstimated5hLimitUsd, v))
+}
+
+// Estimated5hLimitUsdIn applies the In predicate on the "estimated_5h_limit_usd" field.
+func Estimated5hLimitUsdIn(vs ...float64) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldEstimated5hLimitUsd, vs...))
+}
+
+// Estimated5hLimitUsdNotIn applies the NotIn predicate on the "estimated_5h_limit_usd" field.
+func Estimated5hLimitUsdNotIn(vs ...float64) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldEstimated5hLimitUsd, vs...))
+}
+
+// Estimated5hLimitUsdGT applies the GT predicate on the "estimated_5h_limit_usd" field.
+func Estimated5hLimitUsdGT(v float64) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldEstimated5hLimitUsd, v))
+}
+
+// Estimated5hLimitUsdGTE applies the GTE predicate on the "estimated_5h_limit_usd" field.
+func Estimated5hLimitUsdGTE(v float64) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldEstimated5hLimitUsd, v))
+}
+
+// Estimated5hLimitUsdLT applies the LT predicate on the "estimated_5h_limit_usd" field.
+func Estimated5hLimitUsdLT(v float64) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldEstimated5hLimitUsd, v))
+}
+
+// Estimated5hLimitUsdLTE applies the LTE predicate on the "estimated_5h_limit_usd" field.
+func Estimated5hLimitUsdLTE(v float64) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldEstimated5hLimitUsd, v))
+}
+
+// Estimated7dLimitUsdEQ applies the EQ predicate on the "estimated_7d_limit_usd" field.
+func Estimated7dLimitUsdEQ(v float64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldEstimated7dLimitUsd, v))
+}
+
+// Estimated7dLimitUsdNEQ applies the NEQ predicate on the "estimated_7d_limit_usd" field.
+func Estimated7dLimitUsdNEQ(v float64) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldEstimated7dLimitUsd, v))
+}
+
+// Estimated7dLimitUsdIn applies the In predicate on the "estimated_7d_limit_usd" field.
+func Estimated7dLimitUsdIn(vs ...float64) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldEstimated7dLimitUsd, vs...))
+}
+
+// Estimated7dLimitUsdNotIn applies the NotIn predicate on the "estimated_7d_limit_usd" field.
+func Estimated7dLimitUsdNotIn(vs ...float64) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldEstimated7dLimitUsd, vs...))
+}
+
+// Estimated7dLimitUsdGT applies the GT predicate on the "estimated_7d_limit_usd" field.
+func Estimated7dLimitUsdGT(v float64) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldEstimated7dLimitUsd, v))
+}
+
+// Estimated7dLimitUsdGTE applies the GTE predicate on the "estimated_7d_limit_usd" field.
+func Estimated7dLimitUsdGTE(v float64) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldEstimated7dLimitUsd, v))
+}
+
+// Estimated7dLimitUsdLT applies the LT predicate on the "estimated_7d_limit_usd" field.
+func Estimated7dLimitUsdLT(v float64) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldEstimated7dLimitUsd, v))
+}
+
+// Estimated7dLimitUsdLTE applies the LTE predicate on the "estimated_7d_limit_usd" field.
+func Estimated7dLimitUsdLTE(v float64) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldEstimated7dLimitUsd, v))
+}
+
+// CalibrationStateIsNil applies the IsNil predicate on the "calibration_state" field.
+func CalibrationStateIsNil() predicate.Group {
+	return predicate.Group(sql.FieldIsNull(FieldCalibrationState))
+}
+
+// CalibrationStateNotNil applies the NotNil predicate on the "calibration_state" field.
+func CalibrationStateNotNil() predicate.Group {
+	return predicate.Group(sql.FieldNotNull(FieldCalibrationState))
 }
 
 // HasAPIKeys applies the HasEdge predicate on the "api_keys" edge.

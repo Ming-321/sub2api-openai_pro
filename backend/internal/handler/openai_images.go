@@ -88,8 +88,6 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	}
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(parsed.Stream, false)))
 
-	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, parsed.Model)
-
 	if h.errorPassthroughService != nil {
 		service.BindErrorPassthroughService(c, h.errorPassthroughService)
 	}
@@ -107,15 +105,32 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		defer userReleaseFunc()
 	}
 
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription); err != nil {
-		reqLog.Info("openai.images.billing_eligibility_check_failed", zap.Error(err))
-		status, code, message, retryAfter := billingErrorDetails(err)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
+	activeAPIKey := apiKey
+	activeSubscription := subscription
+	var overflowedFromGroupID *int64
+	var accountSelectOverflowSourceErr error
+
+	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), activeAPIKey.User, activeAPIKey, activeAPIKey.Group, activeSubscription); err != nil {
+		var resolveErr error
+		activeAPIKey, activeSubscription, overflowedFromGroupID, resolveErr = h.resolveActiveAPIKeyAfterBillingError(c.Request.Context(), apiKey, subscription, err)
+		if resolveErr == nil && overflowedFromGroupID != nil {
+			reqLog.Info("openai.images.quota_share_overflow_selected",
+				zap.Int64("from_group_id", *overflowedFromGroupID),
+				zap.Int64p("to_group_id", activeAPIKey.GroupID),
+			)
 		}
-		h.handleStreamingAwareError(c, status, code, message, streamStarted)
-		return
+		if resolveErr != nil {
+			reqLog.Info("openai.images.billing_eligibility_check_failed", zap.Error(resolveErr))
+			status, code, message, retryAfter := billingErrorDetails(resolveErr)
+			if retryAfter > 0 {
+				c.Header("Retry-After", strconv.Itoa(retryAfter))
+			}
+			h.handleStreamingAwareError(c, status, code, message, streamStarted)
+			return
+		}
 	}
+
+	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), activeAPIKey.GroupID, parsed.Model)
 
 	sessionHash := h.gatewayService.GenerateExplicitSessionHash(c, body)
 
@@ -129,7 +144,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		reqLog.Debug("openai.images.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
 		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForImages(
 			c.Request.Context(),
-			apiKey.GroupID,
+			activeAPIKey.GroupID,
 			sessionHash,
 			parsed.Model,
 			failedAccountIDs,
@@ -141,6 +156,25 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if len(failedAccountIDs) == 0 {
+				if resolvedAPIKey, resolvedSubscription, resolvedOverflowedFromGroupID, switched := h.resolveActiveAPIKeyAfterAccountSelectError(
+					c.Request.Context(),
+					apiKey,
+					activeAPIKey,
+					err,
+					parsed.Model,
+					reqLog,
+				); switched {
+					activeAPIKey = resolvedAPIKey
+					activeSubscription = resolvedSubscription
+					overflowedFromGroupID = resolvedOverflowedFromGroupID
+					accountSelectOverflowSourceErr = err
+					channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), activeAPIKey.GroupID, parsed.Model)
+					continue
+				}
+				if accountSelectOverflowSourceErr != nil {
+					logOpenAIAccountSelectOverflowFailed(reqLog, apiKey, apiKey.GroupID, activeAPIKey.GroupID, parsed.Model, accountSelectOverflowSourceErr, err)
+					accountSelectOverflowSourceErr = nil
+				}
 				h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available compatible accounts", streamStarted)
 				return
 			}
@@ -155,7 +189,6 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available compatible accounts", streamStarted)
 			return
 		}
-
 		reqLog.Debug("openai.images.account_schedule_decision",
 			zap.String("layer", scheduleDecision.Layer),
 			zap.Bool("sticky_session_hit", scheduleDecision.StickySessionHit),
@@ -166,11 +199,15 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		)
 
 		account := selection.Account
+		if accountSelectOverflowSourceErr != nil && overflowedFromGroupID != nil {
+			logOpenAIAccountSelectOverflowSelected(reqLog, apiKey, apiKey.GroupID, activeAPIKey.GroupID, parsed.Model, account.ID)
+			accountSelectOverflowSourceErr = nil
+		}
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai.images.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
-		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, parsed.Stream, &streamStarted, reqLog)
+		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, activeAPIKey.GroupID, sessionHash, selection, parsed.Stream, &streamStarted, reqLog)
 		if !acquired {
 			return
 		}
@@ -262,18 +299,19 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 
 		h.submitUsageRecordTask(func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-				Result:             result,
-				APIKey:             apiKey,
-				User:               apiKey.User,
-				Account:            account,
-				Subscription:       subscription,
-				InboundEndpoint:    GetInboundEndpoint(c),
-				UpstreamEndpoint:   GetUpstreamEndpoint(c, account.Platform),
-				UserAgent:          userAgent,
-				IPAddress:          clientIP,
-				RequestPayloadHash: requestPayloadHash,
-				APIKeyService:      h.apiKeyService,
-				ChannelUsageFields: channelMapping.ToUsageFields(parsed.Model, result.UpstreamModel),
+				Result:                result,
+				APIKey:                activeAPIKey,
+				User:                  activeAPIKey.User,
+				Account:               account,
+				Subscription:          activeSubscription,
+				InboundEndpoint:       GetInboundEndpoint(c),
+				UpstreamEndpoint:      GetUpstreamEndpoint(c, account.Platform),
+				UserAgent:             userAgent,
+				IPAddress:             clientIP,
+				RequestPayloadHash:    requestPayloadHash,
+				OverflowedFromGroupID: overflowedFromGroupID,
+				APIKeyService:         h.apiKeyService,
+				ChannelUsageFields:    channelMapping.ToUsageFields(parsed.Model, result.UpstreamModel),
 			}); err != nil {
 				logger.L().With(
 					zap.String("component", "handler.openai_gateway.images"),

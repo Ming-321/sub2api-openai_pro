@@ -10,6 +10,7 @@ import (
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -80,9 +81,6 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	setOpsRequestContext(c, reqModel, reqStream, body)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
 
-	// 解析渠道级模型映射
-	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
-
 	if h.errorPassthroughService != nil {
 		service.BindErrorPassthroughService(c, h.errorPassthroughService)
 	}
@@ -100,15 +98,33 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		defer userReleaseFunc()
 	}
 
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription); err != nil {
-		reqLog.Info("openai_chat_completions.billing_eligibility_check_failed", zap.Error(err))
-		status, code, message, retryAfter := billingErrorDetails(err)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
+	activeAPIKey := apiKey
+	activeSubscription := subscription
+	var overflowedFromGroupID *int64
+	var accountSelectOverflowSourceErr error
+
+	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), activeAPIKey.User, activeAPIKey, activeAPIKey.Group, activeSubscription); err != nil {
+		var resolveErr error
+		activeAPIKey, activeSubscription, overflowedFromGroupID, resolveErr = h.resolveActiveAPIKeyAfterBillingError(c.Request.Context(), apiKey, subscription, err)
+		if resolveErr == nil && overflowedFromGroupID != nil {
+			reqLog.Info("openai_chat_completions.quota_share_overflow_selected",
+				zap.Int64("from_group_id", *overflowedFromGroupID),
+				zap.Int64p("to_group_id", activeAPIKey.GroupID),
+			)
 		}
-		h.handleStreamingAwareError(c, status, code, message, streamStarted)
-		return
+		if resolveErr != nil {
+			reqLog.Info("openai_chat_completions.billing_eligibility_check_failed", zap.Error(resolveErr))
+			status, code, message, retryAfter := billingErrorDetails(resolveErr)
+			if retryAfter > 0 {
+				c.Header("Retry-After", strconv.Itoa(retryAfter))
+			}
+			h.handleStreamingAwareError(c, status, code, message, streamStarted)
+			return
+		}
 	}
+
+	// 解析渠道级模型映射
+	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), activeAPIKey.GroupID, reqModel)
 
 	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)
@@ -124,7 +140,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		reqLog.Debug("openai_chat_completions.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
 		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithScheduler(
 			c.Request.Context(),
-			apiKey.GroupID,
+			activeAPIKey.GroupID,
 			"",
 			sessionHash,
 			reqModel,
@@ -139,8 +155,8 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			)
 			if len(failedAccountIDs) == 0 {
 				defaultModel := ""
-				if apiKey.Group != nil {
-					defaultModel = apiKey.Group.DefaultMappedModel
+				if activeAPIKey.Group != nil {
+					defaultModel = activeAPIKey.Group.DefaultMappedModel
 				}
 				if defaultModel != "" && defaultModel != reqModel {
 					reqLog.Info("openai_chat_completions.fallback_to_default_model",
@@ -148,7 +164,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					)
 					selection, scheduleDecision, err = h.gatewayService.SelectAccountWithScheduler(
 						c.Request.Context(),
-						apiKey.GroupID,
+						activeAPIKey.GroupID,
 						"",
 						sessionHash,
 						defaultModel,
@@ -161,6 +177,25 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					}
 				}
 				if err != nil {
+					if resolvedAPIKey, resolvedSubscription, resolvedOverflowedFromGroupID, switched := h.resolveActiveAPIKeyAfterAccountSelectError(
+						c.Request.Context(),
+						apiKey,
+						activeAPIKey,
+						err,
+						reqModel,
+						reqLog,
+					); switched {
+						activeAPIKey = resolvedAPIKey
+						activeSubscription = resolvedSubscription
+						overflowedFromGroupID = resolvedOverflowedFromGroupID
+						accountSelectOverflowSourceErr = err
+						channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), activeAPIKey.GroupID, reqModel)
+						continue
+					}
+					if accountSelectOverflowSourceErr != nil {
+						logOpenAIAccountSelectOverflowFailed(reqLog, apiKey, apiKey.GroupID, activeAPIKey.GroupID, reqModel, accountSelectOverflowSourceErr, err)
+						accountSelectOverflowSourceErr = nil
+					}
 					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "Service temporarily unavailable", streamStarted)
 					return
 				}
@@ -178,12 +213,16 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			return
 		}
 		account := selection.Account
+		if accountSelectOverflowSourceErr != nil && overflowedFromGroupID != nil {
+			logOpenAIAccountSelectOverflowSelected(reqLog, apiKey, apiKey.GroupID, activeAPIKey.GroupID, reqModel, account.ID)
+			accountSelectOverflowSourceErr = nil
+		}
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai_chat_completions.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		_ = scheduleDecision
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
-		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
+		accountReleaseFunc, acquired := h.acquireResponsesAccountSlot(c, activeAPIKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
 		if !acquired {
 			return
 		}
@@ -191,7 +230,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
 		forwardStart := time.Now()
 
-		defaultMappedModel := resolveOpenAIForwardDefaultMappedModel(apiKey, c.GetString("openai_chat_completions_fallback_model"))
+		defaultMappedModel := resolveOpenAIForwardDefaultMappedModel(activeAPIKey, c.GetString("openai_chat_completions_fallback_model"))
 		forwardBody := body
 		if channelMapping.Mapped {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
@@ -270,17 +309,18 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 
 		h.submitUsageRecordTask(func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-				Result:             result,
-				APIKey:             apiKey,
-				User:               apiKey.User,
-				Account:            account,
-				Subscription:       subscription,
-				InboundEndpoint:    GetInboundEndpoint(c),
-				UpstreamEndpoint:   GetUpstreamEndpoint(c, account.Platform),
-				UserAgent:          userAgent,
-				IPAddress:          clientIP,
-				APIKeyService:      h.apiKeyService,
-				ChannelUsageFields: channelMapping.ToUsageFields(reqModel, result.UpstreamModel),
+				Result:                result,
+				APIKey:                activeAPIKey,
+				User:                  activeAPIKey.User,
+				Account:               account,
+				Subscription:          activeSubscription,
+				InboundEndpoint:       GetInboundEndpoint(c),
+				UpstreamEndpoint:      resolveRawCCUpstreamEndpoint(c, account),
+				UserAgent:             userAgent,
+				IPAddress:             clientIP,
+				OverflowedFromGroupID: overflowedFromGroupID,
+				APIKeyService:         h.apiKeyService,
+				ChannelUsageFields:    channelMapping.ToUsageFields(reqModel, result.UpstreamModel),
 			}); err != nil {
 				logger.L().With(
 					zap.String("component", "handler.openai_gateway.chat_completions"),
@@ -298,4 +338,17 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		)
 		return
 	}
+}
+
+// resolveRawCCUpstreamEndpoint returns the actual upstream endpoint for
+// OpenAI Chat Completions requests. For APIKey accounts whose upstream
+// has been probed to not support the Responses API, the request is
+// forwarded directly to /v1/chat/completions — not through the default
+// CC→Responses conversion path.
+func resolveRawCCUpstreamEndpoint(c *gin.Context, account *service.Account) string {
+	if account != nil && account.Type == service.AccountTypeAPIKey &&
+		!openai_compat.ShouldUseResponsesAPI(account.Extra) {
+		return "/v1/chat/completions"
+	}
+	return GetUpstreamEndpoint(c, account.Platform)
 }

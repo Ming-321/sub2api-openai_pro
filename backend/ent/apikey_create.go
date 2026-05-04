@@ -307,6 +307,34 @@ func (_c *APIKeyCreate) SetNillableWindow7dStart(v *time.Time) *APIKeyCreate {
 	return _c
 }
 
+// SetQuotaWeight sets the "quota_weight" field.
+func (_c *APIKeyCreate) SetQuotaWeight(v int) *APIKeyCreate {
+	_c.mutation.SetQuotaWeight(v)
+	return _c
+}
+
+// SetNillableQuotaWeight sets the "quota_weight" field if the given value is not nil.
+func (_c *APIKeyCreate) SetNillableQuotaWeight(v *int) *APIKeyCreate {
+	if v != nil {
+		_c.SetQuotaWeight(*v)
+	}
+	return _c
+}
+
+// SetQuotaShareOverflowGroupID sets the "quota_share_overflow_group_id" field.
+func (_c *APIKeyCreate) SetQuotaShareOverflowGroupID(v int64) *APIKeyCreate {
+	_c.mutation.SetQuotaShareOverflowGroupID(v)
+	return _c
+}
+
+// SetNillableQuotaShareOverflowGroupID sets the "quota_share_overflow_group_id" field if the given value is not nil.
+func (_c *APIKeyCreate) SetNillableQuotaShareOverflowGroupID(v *int64) *APIKeyCreate {
+	if v != nil {
+		_c.SetQuotaShareOverflowGroupID(*v)
+	}
+	return _c
+}
+
 // SetUser sets the "user" edge to the User entity.
 func (_c *APIKeyCreate) SetUser(v *User) *APIKeyCreate {
 	return _c.SetUserID(v.ID)
@@ -419,6 +447,10 @@ func (_c *APIKeyCreate) defaults() error {
 		v := apikey.DefaultUsage7d
 		_c.mutation.SetUsage7d(v)
 	}
+	if _, ok := _c.mutation.QuotaWeight(); !ok {
+		v := apikey.DefaultQuotaWeight
+		_c.mutation.SetQuotaWeight(v)
+	}
 	return nil
 }
 
@@ -480,6 +512,9 @@ func (_c *APIKeyCreate) check() error {
 	}
 	if _, ok := _c.mutation.Usage7d(); !ok {
 		return &ValidationError{Name: "usage_7d", err: errors.New(`ent: missing required field "APIKey.usage_7d"`)}
+	}
+	if _, ok := _c.mutation.QuotaWeight(); !ok {
+		return &ValidationError{Name: "quota_weight", err: errors.New(`ent: missing required field "APIKey.quota_weight"`)}
 	}
 	if len(_c.mutation.UserIDs()) == 0 {
 		return &ValidationError{Name: "user", err: errors.New(`ent: missing required edge "APIKey.user"`)}
@@ -594,6 +629,14 @@ func (_c *APIKeyCreate) createSpec() (*APIKey, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Window7dStart(); ok {
 		_spec.SetField(apikey.FieldWindow7dStart, field.TypeTime, value)
 		_node.Window7dStart = &value
+	}
+	if value, ok := _c.mutation.QuotaWeight(); ok {
+		_spec.SetField(apikey.FieldQuotaWeight, field.TypeInt, value)
+		_node.QuotaWeight = value
+	}
+	if value, ok := _c.mutation.QuotaShareOverflowGroupID(); ok {
+		_spec.SetField(apikey.FieldQuotaShareOverflowGroupID, field.TypeInt64, value)
+		_node.QuotaShareOverflowGroupID = &value
 	}
 	if nodes := _c.mutation.UserIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -1060,6 +1103,48 @@ func (u *APIKeyUpsert) UpdateWindow7dStart() *APIKeyUpsert {
 // ClearWindow7dStart clears the value of the "window_7d_start" field.
 func (u *APIKeyUpsert) ClearWindow7dStart() *APIKeyUpsert {
 	u.SetNull(apikey.FieldWindow7dStart)
+	return u
+}
+
+// SetQuotaWeight sets the "quota_weight" field.
+func (u *APIKeyUpsert) SetQuotaWeight(v int) *APIKeyUpsert {
+	u.Set(apikey.FieldQuotaWeight, v)
+	return u
+}
+
+// UpdateQuotaWeight sets the "quota_weight" field to the value that was provided on create.
+func (u *APIKeyUpsert) UpdateQuotaWeight() *APIKeyUpsert {
+	u.SetExcluded(apikey.FieldQuotaWeight)
+	return u
+}
+
+// AddQuotaWeight adds v to the "quota_weight" field.
+func (u *APIKeyUpsert) AddQuotaWeight(v int) *APIKeyUpsert {
+	u.Add(apikey.FieldQuotaWeight, v)
+	return u
+}
+
+// SetQuotaShareOverflowGroupID sets the "quota_share_overflow_group_id" field.
+func (u *APIKeyUpsert) SetQuotaShareOverflowGroupID(v int64) *APIKeyUpsert {
+	u.Set(apikey.FieldQuotaShareOverflowGroupID, v)
+	return u
+}
+
+// UpdateQuotaShareOverflowGroupID sets the "quota_share_overflow_group_id" field to the value that was provided on create.
+func (u *APIKeyUpsert) UpdateQuotaShareOverflowGroupID() *APIKeyUpsert {
+	u.SetExcluded(apikey.FieldQuotaShareOverflowGroupID)
+	return u
+}
+
+// AddQuotaShareOverflowGroupID adds v to the "quota_share_overflow_group_id" field.
+func (u *APIKeyUpsert) AddQuotaShareOverflowGroupID(v int64) *APIKeyUpsert {
+	u.Add(apikey.FieldQuotaShareOverflowGroupID, v)
+	return u
+}
+
+// ClearQuotaShareOverflowGroupID clears the value of the "quota_share_overflow_group_id" field.
+func (u *APIKeyUpsert) ClearQuotaShareOverflowGroupID() *APIKeyUpsert {
+	u.SetNull(apikey.FieldQuotaShareOverflowGroupID)
 	return u
 }
 
@@ -1532,6 +1617,55 @@ func (u *APIKeyUpsertOne) UpdateWindow7dStart() *APIKeyUpsertOne {
 func (u *APIKeyUpsertOne) ClearWindow7dStart() *APIKeyUpsertOne {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.ClearWindow7dStart()
+	})
+}
+
+// SetQuotaWeight sets the "quota_weight" field.
+func (u *APIKeyUpsertOne) SetQuotaWeight(v int) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetQuotaWeight(v)
+	})
+}
+
+// AddQuotaWeight adds v to the "quota_weight" field.
+func (u *APIKeyUpsertOne) AddQuotaWeight(v int) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.AddQuotaWeight(v)
+	})
+}
+
+// UpdateQuotaWeight sets the "quota_weight" field to the value that was provided on create.
+func (u *APIKeyUpsertOne) UpdateQuotaWeight() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateQuotaWeight()
+	})
+}
+
+// SetQuotaShareOverflowGroupID sets the "quota_share_overflow_group_id" field.
+func (u *APIKeyUpsertOne) SetQuotaShareOverflowGroupID(v int64) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetQuotaShareOverflowGroupID(v)
+	})
+}
+
+// AddQuotaShareOverflowGroupID adds v to the "quota_share_overflow_group_id" field.
+func (u *APIKeyUpsertOne) AddQuotaShareOverflowGroupID(v int64) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.AddQuotaShareOverflowGroupID(v)
+	})
+}
+
+// UpdateQuotaShareOverflowGroupID sets the "quota_share_overflow_group_id" field to the value that was provided on create.
+func (u *APIKeyUpsertOne) UpdateQuotaShareOverflowGroupID() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateQuotaShareOverflowGroupID()
+	})
+}
+
+// ClearQuotaShareOverflowGroupID clears the value of the "quota_share_overflow_group_id" field.
+func (u *APIKeyUpsertOne) ClearQuotaShareOverflowGroupID() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.ClearQuotaShareOverflowGroupID()
 	})
 }
 
@@ -2170,6 +2304,55 @@ func (u *APIKeyUpsertBulk) UpdateWindow7dStart() *APIKeyUpsertBulk {
 func (u *APIKeyUpsertBulk) ClearWindow7dStart() *APIKeyUpsertBulk {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.ClearWindow7dStart()
+	})
+}
+
+// SetQuotaWeight sets the "quota_weight" field.
+func (u *APIKeyUpsertBulk) SetQuotaWeight(v int) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetQuotaWeight(v)
+	})
+}
+
+// AddQuotaWeight adds v to the "quota_weight" field.
+func (u *APIKeyUpsertBulk) AddQuotaWeight(v int) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.AddQuotaWeight(v)
+	})
+}
+
+// UpdateQuotaWeight sets the "quota_weight" field to the value that was provided on create.
+func (u *APIKeyUpsertBulk) UpdateQuotaWeight() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateQuotaWeight()
+	})
+}
+
+// SetQuotaShareOverflowGroupID sets the "quota_share_overflow_group_id" field.
+func (u *APIKeyUpsertBulk) SetQuotaShareOverflowGroupID(v int64) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetQuotaShareOverflowGroupID(v)
+	})
+}
+
+// AddQuotaShareOverflowGroupID adds v to the "quota_share_overflow_group_id" field.
+func (u *APIKeyUpsertBulk) AddQuotaShareOverflowGroupID(v int64) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.AddQuotaShareOverflowGroupID(v)
+	})
+}
+
+// UpdateQuotaShareOverflowGroupID sets the "quota_share_overflow_group_id" field to the value that was provided on create.
+func (u *APIKeyUpsertBulk) UpdateQuotaShareOverflowGroupID() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateQuotaShareOverflowGroupID()
+	})
+}
+
+// ClearQuotaShareOverflowGroupID clears the value of the "quota_share_overflow_group_id" field.
+func (u *APIKeyUpsertBulk) ClearQuotaShareOverflowGroupID() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.ClearQuotaShareOverflowGroupID()
 	})
 }
 

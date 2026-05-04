@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -11,6 +12,7 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
 	"github.com/Wei-Shaw/sub2api/ent/group"
+	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -30,6 +32,11 @@ type groupRepository struct {
 }
 
 func NewGroupRepository(client *dbent.Client, sqlDB *sql.DB) service.GroupRepository {
+	return newGroupRepositoryWithSQL(client, sqlDB)
+}
+
+// NewQuotaShareGroupRepository returns a repository satisfying the QuotaShareGroupRepository interface.
+func NewQuotaShareGroupRepository(client *dbent.Client, sqlDB *sql.DB) service.QuotaShareGroupRepository {
 	return newGroupRepositoryWithSQL(client, sqlDB)
 }
 
@@ -64,7 +71,13 @@ func (r *groupRepository) Create(ctx context.Context, groupIn *service.Group) er
 		SetRequirePrivacySet(groupIn.RequirePrivacySet).
 		SetDefaultMappedModel(groupIn.DefaultMappedModel).
 		SetMessagesDispatchModelConfig(groupIn.MessagesDispatchModelConfig).
-		SetRpmLimit(groupIn.RPMLimit)
+		SetRpmLimit(groupIn.RPMLimit).
+		SetEstimated5hLimitUsd(groupIn.Estimated5hLimitUSD).
+		SetEstimated7dLimitUsd(groupIn.Estimated7dLimitUSD)
+
+	if groupIn.CalibrationState != nil {
+		builder = builder.SetCalibrationState(groupIn.CalibrationState)
+	}
 
 	// 设置模型路由配置
 	if groupIn.ModelRouting != nil {
@@ -132,7 +145,15 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetRequirePrivacySet(groupIn.RequirePrivacySet).
 		SetDefaultMappedModel(groupIn.DefaultMappedModel).
 		SetMessagesDispatchModelConfig(groupIn.MessagesDispatchModelConfig).
-		SetRpmLimit(groupIn.RPMLimit)
+		SetRpmLimit(groupIn.RPMLimit).
+		SetEstimated5hLimitUsd(groupIn.Estimated5hLimitUSD).
+		SetEstimated7dLimitUsd(groupIn.Estimated7dLimitUSD)
+
+	if groupIn.CalibrationState != nil {
+		builder = builder.SetCalibrationState(groupIn.CalibrationState)
+	} else {
+		builder = builder.ClearCalibrationState()
+	}
 
 	// 显式处理可空字段：nil 需要 clear，非 nil 需要 set。
 	if groupIn.DailyLimitUSD != nil {
@@ -810,4 +831,46 @@ func (r *groupRepository) UpdateSortOrders(ctx context.Context, updates []servic
 		}
 	}
 	return nil
+}
+
+// UpdateQuotaShareEstimates updates the estimated limits and calibration state for a quota_share group.
+func (r *groupRepository) UpdateQuotaShareEstimates(ctx context.Context, groupID int64, est5h, est7d float64, calState *domain.QuotaShareCalibrationState) error {
+	var calJSON []byte
+	var err error
+	if calState != nil {
+		calJSON, err = json.Marshal(calState)
+		if err != nil {
+			return err
+		}
+	}
+
+	_, err = r.sql.ExecContext(ctx, `
+		UPDATE groups
+		SET estimated_5h_limit_usd = $2,
+		    estimated_7d_limit_usd = $3,
+		    calibration_state = $4,
+		    updated_at = NOW()
+		WHERE id = $1 AND deleted_at IS NULL`,
+		groupID, est5h, est7d, calJSON)
+	return err
+}
+
+// UpdateQuotaShareCalibrationState updates only the calibration state for a quota_share group.
+func (r *groupRepository) UpdateQuotaShareCalibrationState(ctx context.Context, groupID int64, calState *domain.QuotaShareCalibrationState) error {
+	var calJSON []byte
+	var err error
+	if calState != nil {
+		calJSON, err = json.Marshal(calState)
+		if err != nil {
+			return err
+		}
+	}
+
+	_, err = r.sql.ExecContext(ctx, `
+		UPDATE groups
+		SET calibration_state = $2,
+		    updated_at = NOW()
+		WHERE id = $1 AND deleted_at IS NULL`,
+		groupID, calJSON)
+	return err
 }

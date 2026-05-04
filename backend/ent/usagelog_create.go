@@ -155,6 +155,20 @@ func (_c *UsageLogCreate) SetNillableGroupID(v *int64) *UsageLogCreate {
 	return _c
 }
 
+// SetOverflowedFromGroupID sets the "overflowed_from_group_id" field.
+func (_c *UsageLogCreate) SetOverflowedFromGroupID(v int64) *UsageLogCreate {
+	_c.mutation.SetOverflowedFromGroupID(v)
+	return _c
+}
+
+// SetNillableOverflowedFromGroupID sets the "overflowed_from_group_id" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableOverflowedFromGroupID(v *int64) *UsageLogCreate {
+	if v != nil {
+		_c.SetOverflowedFromGroupID(*v)
+	}
+	return _c
+}
+
 // SetSubscriptionID sets the "subscription_id" field.
 func (_c *UsageLogCreate) SetSubscriptionID(v int64) *UsageLogCreate {
 	_c.mutation.SetSubscriptionID(v)
@@ -828,6 +842,10 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 		_spec.SetField(usagelog.FieldBillingMode, field.TypeString, value)
 		_node.BillingMode = &value
 	}
+	if value, ok := _c.mutation.OverflowedFromGroupID(); ok {
+		_spec.SetField(usagelog.FieldOverflowedFromGroupID, field.TypeInt64, value)
+		_node.OverflowedFromGroupID = &value
+	}
 	if value, ok := _c.mutation.InputTokens(); ok {
 		_spec.SetField(usagelog.FieldInputTokens, field.TypeInt, value)
 		_node.InputTokens = value
@@ -1250,6 +1268,30 @@ func (u *UsageLogUpsert) UpdateGroupID() *UsageLogUpsert {
 // ClearGroupID clears the value of the "group_id" field.
 func (u *UsageLogUpsert) ClearGroupID() *UsageLogUpsert {
 	u.SetNull(usagelog.FieldGroupID)
+	return u
+}
+
+// SetOverflowedFromGroupID sets the "overflowed_from_group_id" field.
+func (u *UsageLogUpsert) SetOverflowedFromGroupID(v int64) *UsageLogUpsert {
+	u.Set(usagelog.FieldOverflowedFromGroupID, v)
+	return u
+}
+
+// UpdateOverflowedFromGroupID sets the "overflowed_from_group_id" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateOverflowedFromGroupID() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldOverflowedFromGroupID)
+	return u
+}
+
+// AddOverflowedFromGroupID adds v to the "overflowed_from_group_id" field.
+func (u *UsageLogUpsert) AddOverflowedFromGroupID(v int64) *UsageLogUpsert {
+	u.Add(usagelog.FieldOverflowedFromGroupID, v)
+	return u
+}
+
+// ClearOverflowedFromGroupID clears the value of the "overflowed_from_group_id" field.
+func (u *UsageLogUpsert) ClearOverflowedFromGroupID() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldOverflowedFromGroupID)
 	return u
 }
 
@@ -1957,6 +1999,34 @@ func (u *UsageLogUpsertOne) UpdateGroupID() *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) ClearGroupID() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearGroupID()
+	})
+}
+
+// SetOverflowedFromGroupID sets the "overflowed_from_group_id" field.
+func (u *UsageLogUpsertOne) SetOverflowedFromGroupID(v int64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetOverflowedFromGroupID(v)
+	})
+}
+
+// AddOverflowedFromGroupID adds v to the "overflowed_from_group_id" field.
+func (u *UsageLogUpsertOne) AddOverflowedFromGroupID(v int64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddOverflowedFromGroupID(v)
+	})
+}
+
+// UpdateOverflowedFromGroupID sets the "overflowed_from_group_id" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateOverflowedFromGroupID() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateOverflowedFromGroupID()
+	})
+}
+
+// ClearOverflowedFromGroupID clears the value of the "overflowed_from_group_id" field.
+func (u *UsageLogUpsertOne) ClearOverflowedFromGroupID() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearOverflowedFromGroupID()
 	})
 }
 
@@ -2903,6 +2973,34 @@ func (u *UsageLogUpsertBulk) UpdateGroupID() *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) ClearGroupID() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearGroupID()
+	})
+}
+
+// SetOverflowedFromGroupID sets the "overflowed_from_group_id" field.
+func (u *UsageLogUpsertBulk) SetOverflowedFromGroupID(v int64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetOverflowedFromGroupID(v)
+	})
+}
+
+// AddOverflowedFromGroupID adds v to the "overflowed_from_group_id" field.
+func (u *UsageLogUpsertBulk) AddOverflowedFromGroupID(v int64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddOverflowedFromGroupID(v)
+	})
+}
+
+// UpdateOverflowedFromGroupID sets the "overflowed_from_group_id" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateOverflowedFromGroupID() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateOverflowedFromGroupID()
+	})
+}
+
+// ClearOverflowedFromGroupID clears the value of the "overflowed_from_group_id" field.
+func (u *UsageLogUpsertBulk) ClearOverflowedFromGroupID() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearOverflowedFromGroupID()
 	})
 }
 

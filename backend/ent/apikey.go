@@ -66,6 +66,10 @@ type APIKey struct {
 	Window1dStart *time.Time `json:"window_1d_start,omitempty"`
 	// Start time of the current 7d rate limit window
 	Window7dStart *time.Time `json:"window_7d_start,omitempty"`
+	// Weight for quota distribution in quota_share groups (default 1)
+	QuotaWeight int `json:"quota_weight,omitempty"`
+	// Key-level OpenAI standard group used after quota_share limits are exceeded
+	QuotaShareOverflowGroupID *int64 `json:"quota_share_overflow_group_id,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the APIKeyQuery when eager-loading is set.
 	Edges        APIKeyEdges `json:"edges"`
@@ -125,7 +129,7 @@ func (*APIKey) scanValues(columns []string) ([]any, error) {
 			values[i] = new([]byte)
 		case apikey.FieldQuota, apikey.FieldQuotaUsed, apikey.FieldRateLimit5h, apikey.FieldRateLimit1d, apikey.FieldRateLimit7d, apikey.FieldUsage5h, apikey.FieldUsage1d, apikey.FieldUsage7d:
 			values[i] = new(sql.NullFloat64)
-		case apikey.FieldID, apikey.FieldUserID, apikey.FieldGroupID:
+		case apikey.FieldID, apikey.FieldUserID, apikey.FieldGroupID, apikey.FieldQuotaWeight, apikey.FieldQuotaShareOverflowGroupID:
 			values[i] = new(sql.NullInt64)
 		case apikey.FieldKey, apikey.FieldName, apikey.FieldStatus:
 			values[i] = new(sql.NullString)
@@ -301,6 +305,19 @@ func (_m *APIKey) assignValues(columns []string, values []any) error {
 				_m.Window7dStart = new(time.Time)
 				*_m.Window7dStart = value.Time
 			}
+		case apikey.FieldQuotaWeight:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field quota_weight", values[i])
+			} else if value.Valid {
+				_m.QuotaWeight = int(value.Int64)
+			}
+		case apikey.FieldQuotaShareOverflowGroupID:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field quota_share_overflow_group_id", values[i])
+			} else if value.Valid {
+				_m.QuotaShareOverflowGroupID = new(int64)
+				*_m.QuotaShareOverflowGroupID = value.Int64
+			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
 		}
@@ -433,6 +450,14 @@ func (_m *APIKey) String() string {
 	if v := _m.Window7dStart; v != nil {
 		builder.WriteString("window_7d_start=")
 		builder.WriteString(v.Format(time.ANSIC))
+	}
+	builder.WriteString(", ")
+	builder.WriteString("quota_weight=")
+	builder.WriteString(fmt.Sprintf("%v", _m.QuotaWeight))
+	builder.WriteString(", ")
+	if v := _m.QuotaShareOverflowGroupID; v != nil {
+		builder.WriteString("quota_share_overflow_group_id=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteByte(')')
 	return builder.String()

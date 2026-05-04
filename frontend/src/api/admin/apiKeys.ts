@@ -19,10 +19,31 @@ export interface UpdateApiKeyGroupResult {
  * @param groupId - Group ID (0 to unbind, positive to bind, null/undefined to skip)
  * @returns Updated API key with auto-grant info
  */
-export async function updateApiKeyGroup(id: number, groupId: number | null): Promise<UpdateApiKeyGroupResult> {
-  const { data } = await apiClient.put<UpdateApiKeyGroupResult>(`/admin/api-keys/${id}`, {
-    group_id: groupId === null ? 0 : groupId
-  })
+export async function updateApiKeyGroup(
+  id: number,
+  options: {
+    groupId?: number | null
+    quotaWeight?: number
+    quotaShareOverflowGroupId?: number | null
+    resetRateLimitUsage?: boolean
+  }
+): Promise<UpdateApiKeyGroupResult> {
+  const payload: Record<string, unknown> = {}
+
+  if (options.groupId !== undefined) {
+    payload.group_id = options.groupId === null ? 0 : options.groupId
+  }
+  if (options.quotaWeight !== undefined) {
+    payload.quota_weight = options.quotaWeight
+  }
+  if (options.quotaShareOverflowGroupId !== undefined) {
+    payload.quota_share_overflow_group_id = options.quotaShareOverflowGroupId === null ? 0 : options.quotaShareOverflowGroupId
+  }
+  if (options.resetRateLimitUsage !== undefined) {
+    payload.reset_rate_limit_usage = options.resetRateLimitUsage
+  }
+
+  const { data } = await apiClient.put<UpdateApiKeyGroupResult>(`/admin/api-keys/${id}`, payload)
   return data
 }
 

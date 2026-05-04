@@ -139,6 +139,7 @@ export default {
     cost: '费用',
     // Status
     quotaMode: 'Key 限额模式',
+    quotaShareMode: '配额共享模式',
     walletBalance: '钱包余额',
     // Ring card titles
     totalQuota: '总额度',
@@ -153,6 +154,9 @@ export default {
     todayExpires: '(今日到期)',
     daysLeft: '({days} 天)',
     usedQuota: '已用额度',
+    quotaShareWeight: '当前权重',
+    upstream5hUsage: '上游 5h 已用',
+    upstream7dUsage: '上游 7d 已用',
     resetNow: '即将重置',
     subscriptionType: '订阅类型',
     subscriptionExpires: '订阅到期',
@@ -347,6 +351,10 @@ export default {
     usage: '使用记录',
     redeem: '兑换',
     affiliate: '邀请返利',
+    affiliateManagement: '邀请返利',
+    affiliateInviteRecords: '邀请记录',
+    affiliateRebateRecords: '返利记录',
+    affiliateTransferRecords: '提取记录',
     profile: '个人资料',
     users: '用户管理',
     groups: '分组管理',
@@ -609,7 +617,8 @@ export default {
 
   // Groups (shared)
   groups: {
-    subscription: '订阅'
+    subscription: '订阅',
+    quotaShare: '配额共享'
   },
 
   // API Keys
@@ -1050,6 +1059,7 @@ export default {
     recentActivity: '最近活动',
     historyWillAppear: '您的兑换历史将显示在这里',
     balanceAddedRedeem: '余额充值（兑换）',
+    balanceAddedAffiliate: '余额充值（返利转入）',
     balanceAddedAdmin: '余额充值（管理员）',
     balanceDeductedAdmin: '余额扣除（管理员）',
     concurrencyAddedRedeem: '并发增加（兑换）',
@@ -1656,6 +1666,49 @@ export default {
       }
     },
 
+    affiliates: {
+      invitesDescription: '查看全站邀请关系和被邀请用户累计返利',
+      rebatesDescription: '查看每一笔产生返利的充值订单',
+      transfersDescription: '查看返利额度转入账户余额的提取流水',
+      errors: {
+        loadFailed: '加载邀请返利记录失败'
+      },
+      records: {
+        search: '搜索',
+        searchPlaceholder: '邮箱、用户名、用户 ID、订单号',
+        startAt: '开始日期',
+        endAt: '结束日期',
+        inviter: '邀请人',
+        invitee: '被邀请人',
+        user: '用户',
+        affCode: '邀请码',
+        order: '订单',
+        totalRebate: '累计返利',
+        orderAmount: '充值金额',
+        payAmount: '支付金额',
+        rebateAmount: '返利金额',
+        paymentType: '支付方式',
+        orderStatus: '订单状态',
+        transferAmount: '提取金额',
+        balanceAfter: '提取后余额',
+        availableQuotaAfter: '提取后可提',
+        frozenQuotaAfter: '提取后冻结',
+        historyQuotaAfter: '提取后历史返利',
+        invitedAt: '邀请时间',
+        rebatedAt: '返利时间',
+        transferredAt: '提取时间'
+      },
+      overview: {
+        title: '用户返利概览',
+        affCode: '邀请码',
+        rebateRate: '返利比例',
+        invitedCount: '邀请人数',
+        rebatedInviteeCount: '已产生返利人数',
+        availableQuota: '可提余额',
+        historyQuota: '历史返利'
+      }
+    },
+
     // Users Management
     users: {
       title: '用户管理',
@@ -1844,6 +1897,7 @@ export default {
       noBalanceHistory: '暂无变动记录',
       allTypes: '全部类型',
       typeBalance: '余额（兑换码）',
+      typeAffiliateBalance: '余额（返利转入）',
       typeAdminBalance: '余额（管理员调整）',
       typeConcurrency: '并发（兑换码）',
       typeAdminConcurrency: '并发（管理员调整）',
@@ -2045,6 +2099,7 @@ export default {
       rateMultipliers: '专属倍率',
       rateMultipliersTitle: '分组专属倍率管理',
       addUserRate: '添加用户专属倍率',
+      quotaShareStatus: '共享状态',
       rpmOverrides: '专属 RPM',
       rpmOverridesTitle: '分组专属 RPM 管理',
       addUserRpm: '添加用户专属 RPM',
@@ -2075,9 +2130,16 @@ export default {
         typeNotEditable: '分组创建后无法修改计费类型。',
         standard: '标准（余额）',
         subscription: '订阅（配额）',
+        quotaShare: '配额共享（quota_share）',
         dailyLimit: '每日限额（USD）',
         weeklyLimit: '每周限额（USD）',
         monthlyLimit: '每月限额（USD）',
+        estimated5h: '5 小时估算总额（USD）',
+        estimated7d: '7 天估算总额（USD）',
+        estimated5hShort: '5h',
+        estimated7dShort: '7d',
+        quotaShareHint:
+          '把上游单账号的总额度按权重分摊给多个下游 Key。这里填写 5 小时和 7 天窗口的初始估算值，后端会结合上游响应头逐步校准。',
         defaultValidityDays: '默认有效期（天）',
         validityHint: '分配给用户时订阅的有效天数',
         noLimit: '无限制'

@@ -350,6 +350,12 @@ type OpenAIGatewayService struct {
 	openaiWSRetryMetrics  openAIWSRetryMetrics
 	responseHeaderFilter  *responseheaders.CompiledHeaderFilter
 	codexSnapshotThrottle *accountWriteThrottle
+	quotaShareService     *QuotaShareService
+}
+
+// SetQuotaShareService injects the QuotaShareService after construction.
+func (s *OpenAIGatewayService) SetQuotaShareService(qs *QuotaShareService) {
+	s.quotaShareService = qs
 }
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService
@@ -2601,7 +2607,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	httpInvalidEncryptedContentRetryTried := false
 	for {
 		// Build upstream request
-		upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)
+		upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 		upstreamReq, err := s.buildUpstreamRequest(upstreamCtx, c, account, body, token, reqStream, promptCacheKey, isCodexCLI)
 		releaseUpstreamCtx()
 		if err != nil {
@@ -2852,7 +2858,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		return nil, err
 	}
 
-	upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)
+	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	upstreamReq, err := s.buildUpstreamRequestOpenAIPassthrough(upstreamCtx, c, account, body, token)
 	releaseUpstreamCtx()
 	if err != nil {
@@ -5020,17 +5026,18 @@ func (s *OpenAIGatewayService) replaceModelInResponseBody(body []byte, fromModel
 
 // OpenAIRecordUsageInput input for recording usage
 type OpenAIRecordUsageInput struct {
-	Result             *OpenAIForwardResult
-	APIKey             *APIKey
-	User               *User
-	Account            *Account
-	Subscription       *UserSubscription
-	InboundEndpoint    string
-	UpstreamEndpoint   string
-	UserAgent          string // 请求的 User-Agent
-	IPAddress          string // 请求的客户端 IP 地址
-	RequestPayloadHash string
-	APIKeyService      APIKeyQuotaUpdater
+	Result                *OpenAIForwardResult
+	APIKey                *APIKey
+	User                  *User
+	Account               *Account
+	Subscription          *UserSubscription
+	InboundEndpoint       string
+	UpstreamEndpoint      string
+	UserAgent             string // 请求的 User-Agent
+	IPAddress             string // 请求的客户端 IP 地址
+	RequestPayloadHash    string
+	OverflowedFromGroupID *int64
+	APIKeyService         APIKeyQuotaUpdater
 	ChannelUsageFields
 }
 
@@ -5041,17 +5048,15 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		s.rateLimitService.ResetOpenAI403Counter(ctx, input.Account.ID)
 	}
 
-	// 跳过所有 token 均为零的用量记录——上游未返回 usage 时不应写入数据库
-	if result.Usage.InputTokens == 0 && result.Usage.OutputTokens == 0 &&
-		result.Usage.CacheCreationInputTokens == 0 && result.Usage.CacheReadInputTokens == 0 &&
-		result.Usage.ImageOutputTokens == 0 && result.ImageCount == 0 {
-		return nil
-	}
-
 	apiKey := input.APIKey
 	user := input.User
 	account := input.Account
 	subscription := input.Subscription
+
+	// Register account→group mapping for quota_share global window updates
+	if s.quotaShareService != nil && apiKey.Group != nil && apiKey.Group.IsQuotaShareType() && account != nil {
+		s.quotaShareService.RegisterAccountGroup(account.ID, apiKey.Group.ID)
+	}
 
 	// 计算实际的新输入token（减去缓存读取的token）
 	// 因为 input_tokens 包含了 cache_read_tokens，而缓存读取的token不应按输入价格计费
@@ -5105,8 +5110,11 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 
 	// Determine billing type
 	isSubscriptionBilling := subscription != nil && apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
+	isQuotaShareBilling := apiKey.Group != nil && apiKey.Group.IsQuotaShareType()
 	billingType := BillingTypeBalance
-	if isSubscriptionBilling {
+	if isQuotaShareBilling {
+		billingType = BillingTypeQuotaShare
+	} else if isSubscriptionBilling {
 		billingType = BillingTypeSubscription
 	}
 
@@ -5185,6 +5193,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if apiKey.GroupID != nil {
 		usageLog.GroupID = apiKey.GroupID
 	}
+	usageLog.OverflowedFromGroupID = input.OverflowedFromGroupID
 	if subscription != nil {
 		usageLog.SubscriptionID = &subscription.ID
 	}
@@ -5213,8 +5222,10 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			Subscription:          subscription,
 			RequestPayloadHash:    resolveUsageBillingPayloadFingerprint(ctx, input.RequestPayloadHash),
 			IsSubscriptionBill:    isSubscriptionBilling,
+			IsQuotaShareBill:      isQuotaShareBilling,
 			AccountRateMultiplier: accountRateMultiplier,
 			APIKeyService:         input.APIKeyService,
+			QuotaShareService:     s.quotaShareService,
 		}, s.billingDeps(), s.usageBillingRepo)
 		return err
 	}()
@@ -5468,6 +5479,11 @@ func (s *OpenAIGatewayService) updateCodexUsageSnapshot(ctx context.Context, acc
 	}
 	if s == nil || s.accountRepo == nil {
 		return
+	}
+
+	// quota_share hook: update global window and attempt calibration before throttle check
+	if s.quotaShareService != nil {
+		s.quotaShareService.TryUpdateGlobalWindowByAccountID(ctx, accountID, snapshot)
 	}
 
 	now := time.Now()

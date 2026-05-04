@@ -63,6 +63,11 @@ type Group struct {
 	// 一旦设置即接管该分组用户的限流（覆盖用户级 rpm_limit），可被 user-group rpm_override 进一步覆盖。
 	RPMLimit int
 
+	// Quota Share fields
+	Estimated5hLimitUSD float64
+	Estimated7dLimitUSD float64
+	CalibrationState    *domain.QuotaShareCalibrationState
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 
@@ -78,6 +83,10 @@ func (g *Group) IsActive() bool {
 
 func (g *Group) IsSubscriptionType() bool {
 	return g.SubscriptionType == SubscriptionTypeSubscription
+}
+
+func (g *Group) IsQuotaShareType() bool {
+	return g.SubscriptionType == SubscriptionTypeQuotaShare
 }
 
 func (g *Group) HasDailyLimit() bool {

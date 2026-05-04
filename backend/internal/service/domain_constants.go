@@ -51,10 +51,11 @@ const (
 
 // Redeem type constants
 const (
-	RedeemTypeBalance      = domain.RedeemTypeBalance
-	RedeemTypeConcurrency  = domain.RedeemTypeConcurrency
-	RedeemTypeSubscription = domain.RedeemTypeSubscription
-	RedeemTypeInvitation   = domain.RedeemTypeInvitation
+	RedeemTypeBalance          = domain.RedeemTypeBalance
+	RedeemTypeConcurrency      = domain.RedeemTypeConcurrency
+	RedeemTypeSubscription     = domain.RedeemTypeSubscription
+	RedeemTypeInvitation       = domain.RedeemTypeInvitation
+	RedeemTypeAffiliateBalance = "affiliate_balance"
 )
 
 // PromoCode status constants
@@ -73,6 +74,7 @@ const (
 const (
 	SubscriptionTypeStandard     = domain.SubscriptionTypeStandard     // 标准计费模式（按余额扣费）
 	SubscriptionTypeSubscription = domain.SubscriptionTypeSubscription // 订阅模式（按限额控制）
+	SubscriptionTypeQuotaShare   = domain.SubscriptionTypeQuotaShare   // 配额共享模式（上游单账号按权重分配）
 )
 
 // Subscription status constants

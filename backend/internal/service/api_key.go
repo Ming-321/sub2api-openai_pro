@@ -28,14 +28,15 @@ func IsWindowExpired(windowStart *time.Time, duration time.Duration) bool {
 }
 
 type APIKey struct {
-	ID          int64
-	UserID      int64
-	Key         string
-	Name        string
-	GroupID     *int64
-	Status      string
-	IPWhitelist []string
-	IPBlacklist []string
+	ID                        int64
+	UserID                    int64
+	Key                       string
+	Name                      string
+	GroupID                   *int64
+	QuotaShareOverflowGroupID *int64
+	Status                    string
+	IPWhitelist               []string
+	IPBlacklist               []string
 	// 预编译的 IP 规则，用于认证热路径避免重复 ParseIP/ParseCIDR。
 	CompiledIPWhitelist *ip.CompiledIPRules `json:"-"`
 	CompiledIPBlacklist *ip.CompiledIPRules `json:"-"`
@@ -49,6 +50,9 @@ type APIKey struct {
 	Quota     float64    // Quota limit in USD (0 = unlimited)
 	QuotaUsed float64    // Used quota amount
 	ExpiresAt *time.Time // Expiration time (nil = never expires)
+
+	// Quota share weight
+	QuotaWeight int // Weight for quota distribution in quota_share groups (default 1)
 
 	// Rate limit fields
 	RateLimit5h   float64    // Rate limit in USD per 5h (0 = unlimited)
@@ -140,4 +144,14 @@ type APIKeyListFilters struct {
 	Search  string
 	Status  string
 	GroupID *int64 // nil=不筛选, 0=无分组, >0=指定分组
+}
+
+type QuotaShareOverflowStatus struct {
+	Configured       bool
+	GroupID          *int64
+	GroupName        string
+	Platform         string
+	SubscriptionType string
+	Available        bool
+	Reason           string
 }

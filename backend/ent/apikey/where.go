@@ -160,6 +160,16 @@ func Window7dStart(v time.Time) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldWindow7dStart, v))
 }
 
+// QuotaWeight applies equality check predicate on the "quota_weight" field. It's identical to QuotaWeightEQ.
+func QuotaWeight(v int) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldQuotaWeight, v))
+}
+
+// QuotaShareOverflowGroupID applies equality check predicate on the "quota_share_overflow_group_id" field. It's identical to QuotaShareOverflowGroupIDEQ.
+func QuotaShareOverflowGroupID(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldQuotaShareOverflowGroupID, v))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldCreatedAt, v))
@@ -1123,6 +1133,96 @@ func Window7dStartIsNil() predicate.APIKey {
 // Window7dStartNotNil applies the NotNil predicate on the "window_7d_start" field.
 func Window7dStartNotNil() predicate.APIKey {
 	return predicate.APIKey(sql.FieldNotNull(FieldWindow7dStart))
+}
+
+// QuotaWeightEQ applies the EQ predicate on the "quota_weight" field.
+func QuotaWeightEQ(v int) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldQuotaWeight, v))
+}
+
+// QuotaWeightNEQ applies the NEQ predicate on the "quota_weight" field.
+func QuotaWeightNEQ(v int) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNEQ(FieldQuotaWeight, v))
+}
+
+// QuotaWeightIn applies the In predicate on the "quota_weight" field.
+func QuotaWeightIn(vs ...int) predicate.APIKey {
+	return predicate.APIKey(sql.FieldIn(FieldQuotaWeight, vs...))
+}
+
+// QuotaWeightNotIn applies the NotIn predicate on the "quota_weight" field.
+func QuotaWeightNotIn(vs ...int) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNotIn(FieldQuotaWeight, vs...))
+}
+
+// QuotaWeightGT applies the GT predicate on the "quota_weight" field.
+func QuotaWeightGT(v int) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGT(FieldQuotaWeight, v))
+}
+
+// QuotaWeightGTE applies the GTE predicate on the "quota_weight" field.
+func QuotaWeightGTE(v int) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGTE(FieldQuotaWeight, v))
+}
+
+// QuotaWeightLT applies the LT predicate on the "quota_weight" field.
+func QuotaWeightLT(v int) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLT(FieldQuotaWeight, v))
+}
+
+// QuotaWeightLTE applies the LTE predicate on the "quota_weight" field.
+func QuotaWeightLTE(v int) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLTE(FieldQuotaWeight, v))
+}
+
+// QuotaShareOverflowGroupIDEQ applies the EQ predicate on the "quota_share_overflow_group_id" field.
+func QuotaShareOverflowGroupIDEQ(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldQuotaShareOverflowGroupID, v))
+}
+
+// QuotaShareOverflowGroupIDNEQ applies the NEQ predicate on the "quota_share_overflow_group_id" field.
+func QuotaShareOverflowGroupIDNEQ(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNEQ(FieldQuotaShareOverflowGroupID, v))
+}
+
+// QuotaShareOverflowGroupIDIn applies the In predicate on the "quota_share_overflow_group_id" field.
+func QuotaShareOverflowGroupIDIn(vs ...int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldIn(FieldQuotaShareOverflowGroupID, vs...))
+}
+
+// QuotaShareOverflowGroupIDNotIn applies the NotIn predicate on the "quota_share_overflow_group_id" field.
+func QuotaShareOverflowGroupIDNotIn(vs ...int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNotIn(FieldQuotaShareOverflowGroupID, vs...))
+}
+
+// QuotaShareOverflowGroupIDGT applies the GT predicate on the "quota_share_overflow_group_id" field.
+func QuotaShareOverflowGroupIDGT(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGT(FieldQuotaShareOverflowGroupID, v))
+}
+
+// QuotaShareOverflowGroupIDGTE applies the GTE predicate on the "quota_share_overflow_group_id" field.
+func QuotaShareOverflowGroupIDGTE(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGTE(FieldQuotaShareOverflowGroupID, v))
+}
+
+// QuotaShareOverflowGroupIDLT applies the LT predicate on the "quota_share_overflow_group_id" field.
+func QuotaShareOverflowGroupIDLT(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLT(FieldQuotaShareOverflowGroupID, v))
+}
+
+// QuotaShareOverflowGroupIDLTE applies the LTE predicate on the "quota_share_overflow_group_id" field.
+func QuotaShareOverflowGroupIDLTE(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLTE(FieldQuotaShareOverflowGroupID, v))
+}
+
+// QuotaShareOverflowGroupIDIsNil applies the IsNil predicate on the "quota_share_overflow_group_id" field.
+func QuotaShareOverflowGroupIDIsNil() predicate.APIKey {
+	return predicate.APIKey(sql.FieldIsNull(FieldQuotaShareOverflowGroupID))
+}
+
+// QuotaShareOverflowGroupIDNotNil applies the NotNil predicate on the "quota_share_overflow_group_id" field.
+func QuotaShareOverflowGroupIDNotNil() predicate.APIKey {
+	return predicate.APIKey(sql.FieldNotNull(FieldQuotaShareOverflowGroupID))
 }
 
 // HasUser applies the HasEdge predicate on the "user" edge.

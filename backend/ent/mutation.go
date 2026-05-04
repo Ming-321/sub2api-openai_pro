@@ -98,51 +98,55 @@ const (
 // APIKeyMutation represents an operation that mutates the APIKey nodes in the graph.
 type APIKeyMutation struct {
 	config
-	op                 Op
-	typ                string
-	id                 *int64
-	created_at         *time.Time
-	updated_at         *time.Time
-	deleted_at         *time.Time
-	key                *string
-	name               *string
-	status             *string
-	last_used_at       *time.Time
-	ip_whitelist       *[]string
-	appendip_whitelist []string
-	ip_blacklist       *[]string
-	appendip_blacklist []string
-	quota              *float64
-	addquota           *float64
-	quota_used         *float64
-	addquota_used      *float64
-	expires_at         *time.Time
-	rate_limit_5h      *float64
-	addrate_limit_5h   *float64
-	rate_limit_1d      *float64
-	addrate_limit_1d   *float64
-	rate_limit_7d      *float64
-	addrate_limit_7d   *float64
-	usage_5h           *float64
-	addusage_5h        *float64
-	usage_1d           *float64
-	addusage_1d        *float64
-	usage_7d           *float64
-	addusage_7d        *float64
-	window_5h_start    *time.Time
-	window_1d_start    *time.Time
-	window_7d_start    *time.Time
-	clearedFields      map[string]struct{}
-	user               *int64
-	cleareduser        bool
-	group              *int64
-	clearedgroup       bool
-	usage_logs         map[int64]struct{}
-	removedusage_logs  map[int64]struct{}
-	clearedusage_logs  bool
-	done               bool
-	oldValue           func(context.Context) (*APIKey, error)
-	predicates         []predicate.APIKey
+	op                               Op
+	typ                              string
+	id                               *int64
+	created_at                       *time.Time
+	updated_at                       *time.Time
+	deleted_at                       *time.Time
+	key                              *string
+	name                             *string
+	status                           *string
+	last_used_at                     *time.Time
+	ip_whitelist                     *[]string
+	appendip_whitelist               []string
+	ip_blacklist                     *[]string
+	appendip_blacklist               []string
+	quota                            *float64
+	addquota                         *float64
+	quota_used                       *float64
+	addquota_used                    *float64
+	expires_at                       *time.Time
+	rate_limit_5h                    *float64
+	addrate_limit_5h                 *float64
+	rate_limit_1d                    *float64
+	addrate_limit_1d                 *float64
+	rate_limit_7d                    *float64
+	addrate_limit_7d                 *float64
+	usage_5h                         *float64
+	addusage_5h                      *float64
+	usage_1d                         *float64
+	addusage_1d                      *float64
+	usage_7d                         *float64
+	addusage_7d                      *float64
+	window_5h_start                  *time.Time
+	window_1d_start                  *time.Time
+	window_7d_start                  *time.Time
+	quota_weight                     *int
+	addquota_weight                  *int
+	quota_share_overflow_group_id    *int64
+	addquota_share_overflow_group_id *int64
+	clearedFields                    map[string]struct{}
+	user                             *int64
+	cleareduser                      bool
+	group                            *int64
+	clearedgroup                     bool
+	usage_logs                       map[int64]struct{}
+	removedusage_logs                map[int64]struct{}
+	clearedusage_logs                bool
+	done                             bool
+	oldValue                         func(context.Context) (*APIKey, error)
+	predicates                       []predicate.APIKey
 }
 
 var _ ent.Mutation = (*APIKeyMutation)(nil)
@@ -1380,6 +1384,132 @@ func (m *APIKeyMutation) ResetWindow7dStart() {
 	delete(m.clearedFields, apikey.FieldWindow7dStart)
 }
 
+// SetQuotaWeight sets the "quota_weight" field.
+func (m *APIKeyMutation) SetQuotaWeight(i int) {
+	m.quota_weight = &i
+	m.addquota_weight = nil
+}
+
+// QuotaWeight returns the value of the "quota_weight" field in the mutation.
+func (m *APIKeyMutation) QuotaWeight() (r int, exists bool) {
+	v := m.quota_weight
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldQuotaWeight returns the old "quota_weight" field's value of the APIKey entity.
+// If the APIKey object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *APIKeyMutation) OldQuotaWeight(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldQuotaWeight is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldQuotaWeight requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldQuotaWeight: %w", err)
+	}
+	return oldValue.QuotaWeight, nil
+}
+
+// AddQuotaWeight adds i to the "quota_weight" field.
+func (m *APIKeyMutation) AddQuotaWeight(i int) {
+	if m.addquota_weight != nil {
+		*m.addquota_weight += i
+	} else {
+		m.addquota_weight = &i
+	}
+}
+
+// AddedQuotaWeight returns the value that was added to the "quota_weight" field in this mutation.
+func (m *APIKeyMutation) AddedQuotaWeight() (r int, exists bool) {
+	v := m.addquota_weight
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetQuotaWeight resets all changes to the "quota_weight" field.
+func (m *APIKeyMutation) ResetQuotaWeight() {
+	m.quota_weight = nil
+	m.addquota_weight = nil
+}
+
+// SetQuotaShareOverflowGroupID sets the "quota_share_overflow_group_id" field.
+func (m *APIKeyMutation) SetQuotaShareOverflowGroupID(i int64) {
+	m.quota_share_overflow_group_id = &i
+	m.addquota_share_overflow_group_id = nil
+}
+
+// QuotaShareOverflowGroupID returns the value of the "quota_share_overflow_group_id" field in the mutation.
+func (m *APIKeyMutation) QuotaShareOverflowGroupID() (r int64, exists bool) {
+	v := m.quota_share_overflow_group_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldQuotaShareOverflowGroupID returns the old "quota_share_overflow_group_id" field's value of the APIKey entity.
+// If the APIKey object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *APIKeyMutation) OldQuotaShareOverflowGroupID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldQuotaShareOverflowGroupID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldQuotaShareOverflowGroupID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldQuotaShareOverflowGroupID: %w", err)
+	}
+	return oldValue.QuotaShareOverflowGroupID, nil
+}
+
+// AddQuotaShareOverflowGroupID adds i to the "quota_share_overflow_group_id" field.
+func (m *APIKeyMutation) AddQuotaShareOverflowGroupID(i int64) {
+	if m.addquota_share_overflow_group_id != nil {
+		*m.addquota_share_overflow_group_id += i
+	} else {
+		m.addquota_share_overflow_group_id = &i
+	}
+}
+
+// AddedQuotaShareOverflowGroupID returns the value that was added to the "quota_share_overflow_group_id" field in this mutation.
+func (m *APIKeyMutation) AddedQuotaShareOverflowGroupID() (r int64, exists bool) {
+	v := m.addquota_share_overflow_group_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearQuotaShareOverflowGroupID clears the value of the "quota_share_overflow_group_id" field.
+func (m *APIKeyMutation) ClearQuotaShareOverflowGroupID() {
+	m.quota_share_overflow_group_id = nil
+	m.addquota_share_overflow_group_id = nil
+	m.clearedFields[apikey.FieldQuotaShareOverflowGroupID] = struct{}{}
+}
+
+// QuotaShareOverflowGroupIDCleared returns if the "quota_share_overflow_group_id" field was cleared in this mutation.
+func (m *APIKeyMutation) QuotaShareOverflowGroupIDCleared() bool {
+	_, ok := m.clearedFields[apikey.FieldQuotaShareOverflowGroupID]
+	return ok
+}
+
+// ResetQuotaShareOverflowGroupID resets all changes to the "quota_share_overflow_group_id" field.
+func (m *APIKeyMutation) ResetQuotaShareOverflowGroupID() {
+	m.quota_share_overflow_group_id = nil
+	m.addquota_share_overflow_group_id = nil
+	delete(m.clearedFields, apikey.FieldQuotaShareOverflowGroupID)
+}
+
 // ClearUser clears the "user" edge to the User entity.
 func (m *APIKeyMutation) ClearUser() {
 	m.cleareduser = true
@@ -1522,7 +1652,7 @@ func (m *APIKeyMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *APIKeyMutation) Fields() []string {
-	fields := make([]string, 0, 23)
+	fields := make([]string, 0, 25)
 	if m.created_at != nil {
 		fields = append(fields, apikey.FieldCreatedAt)
 	}
@@ -1592,6 +1722,12 @@ func (m *APIKeyMutation) Fields() []string {
 	if m.window_7d_start != nil {
 		fields = append(fields, apikey.FieldWindow7dStart)
 	}
+	if m.quota_weight != nil {
+		fields = append(fields, apikey.FieldQuotaWeight)
+	}
+	if m.quota_share_overflow_group_id != nil {
+		fields = append(fields, apikey.FieldQuotaShareOverflowGroupID)
+	}
 	return fields
 }
 
@@ -1646,6 +1782,10 @@ func (m *APIKeyMutation) Field(name string) (ent.Value, bool) {
 		return m.Window1dStart()
 	case apikey.FieldWindow7dStart:
 		return m.Window7dStart()
+	case apikey.FieldQuotaWeight:
+		return m.QuotaWeight()
+	case apikey.FieldQuotaShareOverflowGroupID:
+		return m.QuotaShareOverflowGroupID()
 	}
 	return nil, false
 }
@@ -1701,6 +1841,10 @@ func (m *APIKeyMutation) OldField(ctx context.Context, name string) (ent.Value, 
 		return m.OldWindow1dStart(ctx)
 	case apikey.FieldWindow7dStart:
 		return m.OldWindow7dStart(ctx)
+	case apikey.FieldQuotaWeight:
+		return m.OldQuotaWeight(ctx)
+	case apikey.FieldQuotaShareOverflowGroupID:
+		return m.OldQuotaShareOverflowGroupID(ctx)
 	}
 	return nil, fmt.Errorf("unknown APIKey field %s", name)
 }
@@ -1871,6 +2015,20 @@ func (m *APIKeyMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetWindow7dStart(v)
 		return nil
+	case apikey.FieldQuotaWeight:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetQuotaWeight(v)
+		return nil
+	case apikey.FieldQuotaShareOverflowGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetQuotaShareOverflowGroupID(v)
+		return nil
 	}
 	return fmt.Errorf("unknown APIKey field %s", name)
 }
@@ -1903,6 +2061,12 @@ func (m *APIKeyMutation) AddedFields() []string {
 	if m.addusage_7d != nil {
 		fields = append(fields, apikey.FieldUsage7d)
 	}
+	if m.addquota_weight != nil {
+		fields = append(fields, apikey.FieldQuotaWeight)
+	}
+	if m.addquota_share_overflow_group_id != nil {
+		fields = append(fields, apikey.FieldQuotaShareOverflowGroupID)
+	}
 	return fields
 }
 
@@ -1927,6 +2091,10 @@ func (m *APIKeyMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedUsage1d()
 	case apikey.FieldUsage7d:
 		return m.AddedUsage7d()
+	case apikey.FieldQuotaWeight:
+		return m.AddedQuotaWeight()
+	case apikey.FieldQuotaShareOverflowGroupID:
+		return m.AddedQuotaShareOverflowGroupID()
 	}
 	return nil, false
 }
@@ -1992,6 +2160,20 @@ func (m *APIKeyMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddUsage7d(v)
 		return nil
+	case apikey.FieldQuotaWeight:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddQuotaWeight(v)
+		return nil
+	case apikey.FieldQuotaShareOverflowGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddQuotaShareOverflowGroupID(v)
+		return nil
 	}
 	return fmt.Errorf("unknown APIKey numeric field %s", name)
 }
@@ -2026,6 +2208,9 @@ func (m *APIKeyMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(apikey.FieldWindow7dStart) {
 		fields = append(fields, apikey.FieldWindow7dStart)
+	}
+	if m.FieldCleared(apikey.FieldQuotaShareOverflowGroupID) {
+		fields = append(fields, apikey.FieldQuotaShareOverflowGroupID)
 	}
 	return fields
 }
@@ -2067,6 +2252,9 @@ func (m *APIKeyMutation) ClearField(name string) error {
 		return nil
 	case apikey.FieldWindow7dStart:
 		m.ClearWindow7dStart()
+		return nil
+	case apikey.FieldQuotaShareOverflowGroupID:
+		m.ClearQuotaShareOverflowGroupID()
 		return nil
 	}
 	return fmt.Errorf("unknown APIKey nullable field %s", name)
@@ -2144,6 +2332,12 @@ func (m *APIKeyMutation) ResetField(name string) error {
 		return nil
 	case apikey.FieldWindow7dStart:
 		m.ResetWindow7dStart()
+		return nil
+	case apikey.FieldQuotaWeight:
+		m.ResetQuotaWeight()
+		return nil
+	case apikey.FieldQuotaShareOverflowGroupID:
+		m.ResetQuotaShareOverflowGroupID()
 		return nil
 	}
 	return fmt.Errorf("unknown APIKey field %s", name)
@@ -14789,6 +14983,11 @@ type GroupMutation struct {
 	messages_dispatch_model_config          *domain.OpenAIMessagesDispatchModelConfig
 	rpm_limit                               *int
 	addrpm_limit                            *int
+	estimated_5h_limit_usd                  *float64
+	addestimated_5h_limit_usd               *float64
+	estimated_7d_limit_usd                  *float64
+	addestimated_7d_limit_usd               *float64
+	calibration_state                       **domain.QuotaShareCalibrationState
 	clearedFields                           map[string]struct{}
 	api_keys                                map[int64]struct{}
 	removedapi_keys                         map[int64]struct{}
@@ -16433,6 +16632,167 @@ func (m *GroupMutation) ResetRpmLimit() {
 	m.addrpm_limit = nil
 }
 
+// SetEstimated5hLimitUsd sets the "estimated_5h_limit_usd" field.
+func (m *GroupMutation) SetEstimated5hLimitUsd(f float64) {
+	m.estimated_5h_limit_usd = &f
+	m.addestimated_5h_limit_usd = nil
+}
+
+// Estimated5hLimitUsd returns the value of the "estimated_5h_limit_usd" field in the mutation.
+func (m *GroupMutation) Estimated5hLimitUsd() (r float64, exists bool) {
+	v := m.estimated_5h_limit_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEstimated5hLimitUsd returns the old "estimated_5h_limit_usd" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldEstimated5hLimitUsd(ctx context.Context) (v float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEstimated5hLimitUsd is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEstimated5hLimitUsd requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEstimated5hLimitUsd: %w", err)
+	}
+	return oldValue.Estimated5hLimitUsd, nil
+}
+
+// AddEstimated5hLimitUsd adds f to the "estimated_5h_limit_usd" field.
+func (m *GroupMutation) AddEstimated5hLimitUsd(f float64) {
+	if m.addestimated_5h_limit_usd != nil {
+		*m.addestimated_5h_limit_usd += f
+	} else {
+		m.addestimated_5h_limit_usd = &f
+	}
+}
+
+// AddedEstimated5hLimitUsd returns the value that was added to the "estimated_5h_limit_usd" field in this mutation.
+func (m *GroupMutation) AddedEstimated5hLimitUsd() (r float64, exists bool) {
+	v := m.addestimated_5h_limit_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetEstimated5hLimitUsd resets all changes to the "estimated_5h_limit_usd" field.
+func (m *GroupMutation) ResetEstimated5hLimitUsd() {
+	m.estimated_5h_limit_usd = nil
+	m.addestimated_5h_limit_usd = nil
+}
+
+// SetEstimated7dLimitUsd sets the "estimated_7d_limit_usd" field.
+func (m *GroupMutation) SetEstimated7dLimitUsd(f float64) {
+	m.estimated_7d_limit_usd = &f
+	m.addestimated_7d_limit_usd = nil
+}
+
+// Estimated7dLimitUsd returns the value of the "estimated_7d_limit_usd" field in the mutation.
+func (m *GroupMutation) Estimated7dLimitUsd() (r float64, exists bool) {
+	v := m.estimated_7d_limit_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEstimated7dLimitUsd returns the old "estimated_7d_limit_usd" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldEstimated7dLimitUsd(ctx context.Context) (v float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEstimated7dLimitUsd is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEstimated7dLimitUsd requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEstimated7dLimitUsd: %w", err)
+	}
+	return oldValue.Estimated7dLimitUsd, nil
+}
+
+// AddEstimated7dLimitUsd adds f to the "estimated_7d_limit_usd" field.
+func (m *GroupMutation) AddEstimated7dLimitUsd(f float64) {
+	if m.addestimated_7d_limit_usd != nil {
+		*m.addestimated_7d_limit_usd += f
+	} else {
+		m.addestimated_7d_limit_usd = &f
+	}
+}
+
+// AddedEstimated7dLimitUsd returns the value that was added to the "estimated_7d_limit_usd" field in this mutation.
+func (m *GroupMutation) AddedEstimated7dLimitUsd() (r float64, exists bool) {
+	v := m.addestimated_7d_limit_usd
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetEstimated7dLimitUsd resets all changes to the "estimated_7d_limit_usd" field.
+func (m *GroupMutation) ResetEstimated7dLimitUsd() {
+	m.estimated_7d_limit_usd = nil
+	m.addestimated_7d_limit_usd = nil
+}
+
+// SetCalibrationState sets the "calibration_state" field.
+func (m *GroupMutation) SetCalibrationState(dscs *domain.QuotaShareCalibrationState) {
+	m.calibration_state = &dscs
+}
+
+// CalibrationState returns the value of the "calibration_state" field in the mutation.
+func (m *GroupMutation) CalibrationState() (r *domain.QuotaShareCalibrationState, exists bool) {
+	v := m.calibration_state
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCalibrationState returns the old "calibration_state" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldCalibrationState(ctx context.Context) (v *domain.QuotaShareCalibrationState, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCalibrationState is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCalibrationState requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCalibrationState: %w", err)
+	}
+	return oldValue.CalibrationState, nil
+}
+
+// ClearCalibrationState clears the value of the "calibration_state" field.
+func (m *GroupMutation) ClearCalibrationState() {
+	m.calibration_state = nil
+	m.clearedFields[group.FieldCalibrationState] = struct{}{}
+}
+
+// CalibrationStateCleared returns if the "calibration_state" field was cleared in this mutation.
+func (m *GroupMutation) CalibrationStateCleared() bool {
+	_, ok := m.clearedFields[group.FieldCalibrationState]
+	return ok
+}
+
+// ResetCalibrationState resets all changes to the "calibration_state" field.
+func (m *GroupMutation) ResetCalibrationState() {
+	m.calibration_state = nil
+	delete(m.clearedFields, group.FieldCalibrationState)
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by ids.
 func (m *GroupMutation) AddAPIKeyIDs(ids ...int64) {
 	if m.api_keys == nil {
@@ -16791,7 +17151,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 31)
+	fields := make([]string, 0, 34)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -16885,6 +17245,15 @@ func (m *GroupMutation) Fields() []string {
 	if m.rpm_limit != nil {
 		fields = append(fields, group.FieldRpmLimit)
 	}
+	if m.estimated_5h_limit_usd != nil {
+		fields = append(fields, group.FieldEstimated5hLimitUsd)
+	}
+	if m.estimated_7d_limit_usd != nil {
+		fields = append(fields, group.FieldEstimated7dLimitUsd)
+	}
+	if m.calibration_state != nil {
+		fields = append(fields, group.FieldCalibrationState)
+	}
 	return fields
 }
 
@@ -16955,6 +17324,12 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.MessagesDispatchModelConfig()
 	case group.FieldRpmLimit:
 		return m.RpmLimit()
+	case group.FieldEstimated5hLimitUsd:
+		return m.Estimated5hLimitUsd()
+	case group.FieldEstimated7dLimitUsd:
+		return m.Estimated7dLimitUsd()
+	case group.FieldCalibrationState:
+		return m.CalibrationState()
 	}
 	return nil, false
 }
@@ -17026,6 +17401,12 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldMessagesDispatchModelConfig(ctx)
 	case group.FieldRpmLimit:
 		return m.OldRpmLimit(ctx)
+	case group.FieldEstimated5hLimitUsd:
+		return m.OldEstimated5hLimitUsd(ctx)
+	case group.FieldEstimated7dLimitUsd:
+		return m.OldEstimated7dLimitUsd(ctx)
+	case group.FieldCalibrationState:
+		return m.OldCalibrationState(ctx)
 	}
 	return nil, fmt.Errorf("unknown Group field %s", name)
 }
@@ -17252,6 +17633,27 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetRpmLimit(v)
 		return nil
+	case group.FieldEstimated5hLimitUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEstimated5hLimitUsd(v)
+		return nil
+	case group.FieldEstimated7dLimitUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEstimated7dLimitUsd(v)
+		return nil
+	case group.FieldCalibrationState:
+		v, ok := value.(*domain.QuotaShareCalibrationState)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCalibrationState(v)
+		return nil
 	}
 	return fmt.Errorf("unknown Group field %s", name)
 }
@@ -17296,6 +17698,12 @@ func (m *GroupMutation) AddedFields() []string {
 	if m.addrpm_limit != nil {
 		fields = append(fields, group.FieldRpmLimit)
 	}
+	if m.addestimated_5h_limit_usd != nil {
+		fields = append(fields, group.FieldEstimated5hLimitUsd)
+	}
+	if m.addestimated_7d_limit_usd != nil {
+		fields = append(fields, group.FieldEstimated7dLimitUsd)
+	}
 	return fields
 }
 
@@ -17328,6 +17736,10 @@ func (m *GroupMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedSortOrder()
 	case group.FieldRpmLimit:
 		return m.AddedRpmLimit()
+	case group.FieldEstimated5hLimitUsd:
+		return m.AddedEstimated5hLimitUsd()
+	case group.FieldEstimated7dLimitUsd:
+		return m.AddedEstimated7dLimitUsd()
 	}
 	return nil, false
 }
@@ -17421,6 +17833,20 @@ func (m *GroupMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddRpmLimit(v)
 		return nil
+	case group.FieldEstimated5hLimitUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddEstimated5hLimitUsd(v)
+		return nil
+	case group.FieldEstimated7dLimitUsd:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddEstimated7dLimitUsd(v)
+		return nil
 	}
 	return fmt.Errorf("unknown Group numeric field %s", name)
 }
@@ -17461,6 +17887,9 @@ func (m *GroupMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(group.FieldModelRouting) {
 		fields = append(fields, group.FieldModelRouting)
+	}
+	if m.FieldCleared(group.FieldCalibrationState) {
+		fields = append(fields, group.FieldCalibrationState)
 	}
 	return fields
 }
@@ -17508,6 +17937,9 @@ func (m *GroupMutation) ClearField(name string) error {
 		return nil
 	case group.FieldModelRouting:
 		m.ClearModelRouting()
+		return nil
+	case group.FieldCalibrationState:
+		m.ClearCalibrationState()
 		return nil
 	}
 	return fmt.Errorf("unknown Group nullable field %s", name)
@@ -17609,6 +18041,15 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldRpmLimit:
 		m.ResetRpmLimit()
+		return nil
+	case group.FieldEstimated5hLimitUsd:
+		m.ResetEstimated5hLimitUsd()
+		return nil
+	case group.FieldEstimated7dLimitUsd:
+		m.ResetEstimated7dLimitUsd()
+		return nil
+	case group.FieldCalibrationState:
+		m.ResetCalibrationState()
 		return nil
 	}
 	return fmt.Errorf("unknown Group field %s", name)
@@ -34025,6 +34466,8 @@ type UsageLogMutation struct {
 	model_mapping_chain         *string
 	billing_tier                *string
 	billing_mode                *string
+	overflowed_from_group_id    *int64
+	addoverflowed_from_group_id *int64
 	input_tokens                *int
 	addinput_tokens             *int
 	output_tokens               *int
@@ -34723,6 +35166,76 @@ func (m *UsageLogMutation) GroupIDCleared() bool {
 func (m *UsageLogMutation) ResetGroupID() {
 	m.group = nil
 	delete(m.clearedFields, usagelog.FieldGroupID)
+}
+
+// SetOverflowedFromGroupID sets the "overflowed_from_group_id" field.
+func (m *UsageLogMutation) SetOverflowedFromGroupID(i int64) {
+	m.overflowed_from_group_id = &i
+	m.addoverflowed_from_group_id = nil
+}
+
+// OverflowedFromGroupID returns the value of the "overflowed_from_group_id" field in the mutation.
+func (m *UsageLogMutation) OverflowedFromGroupID() (r int64, exists bool) {
+	v := m.overflowed_from_group_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOverflowedFromGroupID returns the old "overflowed_from_group_id" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldOverflowedFromGroupID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOverflowedFromGroupID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOverflowedFromGroupID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOverflowedFromGroupID: %w", err)
+	}
+	return oldValue.OverflowedFromGroupID, nil
+}
+
+// AddOverflowedFromGroupID adds i to the "overflowed_from_group_id" field.
+func (m *UsageLogMutation) AddOverflowedFromGroupID(i int64) {
+	if m.addoverflowed_from_group_id != nil {
+		*m.addoverflowed_from_group_id += i
+	} else {
+		m.addoverflowed_from_group_id = &i
+	}
+}
+
+// AddedOverflowedFromGroupID returns the value that was added to the "overflowed_from_group_id" field in this mutation.
+func (m *UsageLogMutation) AddedOverflowedFromGroupID() (r int64, exists bool) {
+	v := m.addoverflowed_from_group_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearOverflowedFromGroupID clears the value of the "overflowed_from_group_id" field.
+func (m *UsageLogMutation) ClearOverflowedFromGroupID() {
+	m.overflowed_from_group_id = nil
+	m.addoverflowed_from_group_id = nil
+	m.clearedFields[usagelog.FieldOverflowedFromGroupID] = struct{}{}
+}
+
+// OverflowedFromGroupIDCleared returns if the "overflowed_from_group_id" field was cleared in this mutation.
+func (m *UsageLogMutation) OverflowedFromGroupIDCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldOverflowedFromGroupID]
+	return ok
+}
+
+// ResetOverflowedFromGroupID resets all changes to the "overflowed_from_group_id" field.
+func (m *UsageLogMutation) ResetOverflowedFromGroupID() {
+	m.overflowed_from_group_id = nil
+	m.addoverflowed_from_group_id = nil
+	delete(m.clearedFields, usagelog.FieldOverflowedFromGroupID)
 }
 
 // SetSubscriptionID sets the "subscription_id" field.
@@ -36248,7 +36761,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 37)
+	fields := make([]string, 0, 38)
 	if m.user != nil {
 		fields = append(fields, usagelog.FieldUserID)
 	}
@@ -36284,6 +36797,9 @@ func (m *UsageLogMutation) Fields() []string {
 	}
 	if m.group != nil {
 		fields = append(fields, usagelog.FieldGroupID)
+	}
+	if m.overflowed_from_group_id != nil {
+		fields = append(fields, usagelog.FieldOverflowedFromGroupID)
 	}
 	if m.subscription != nil {
 		fields = append(fields, usagelog.FieldSubscriptionID)
@@ -36392,6 +36908,8 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.BillingMode()
 	case usagelog.FieldGroupID:
 		return m.GroupID()
+	case usagelog.FieldOverflowedFromGroupID:
+		return m.OverflowedFromGroupID()
 	case usagelog.FieldSubscriptionID:
 		return m.SubscriptionID()
 	case usagelog.FieldInputTokens:
@@ -36475,6 +36993,8 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldBillingMode(ctx)
 	case usagelog.FieldGroupID:
 		return m.OldGroupID(ctx)
+	case usagelog.FieldOverflowedFromGroupID:
+		return m.OldOverflowedFromGroupID(ctx)
 	case usagelog.FieldSubscriptionID:
 		return m.OldSubscriptionID(ctx)
 	case usagelog.FieldInputTokens:
@@ -36617,6 +37137,13 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetGroupID(v)
+		return nil
+	case usagelog.FieldOverflowedFromGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOverflowedFromGroupID(v)
 		return nil
 	case usagelog.FieldSubscriptionID:
 		v, ok := value.(int64)
@@ -36804,6 +37331,9 @@ func (m *UsageLogMutation) AddedFields() []string {
 	if m.addchannel_id != nil {
 		fields = append(fields, usagelog.FieldChannelID)
 	}
+	if m.addoverflowed_from_group_id != nil {
+		fields = append(fields, usagelog.FieldOverflowedFromGroupID)
+	}
 	if m.addinput_tokens != nil {
 		fields = append(fields, usagelog.FieldInputTokens)
 	}
@@ -36868,6 +37398,8 @@ func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
 	case usagelog.FieldChannelID:
 		return m.AddedChannelID()
+	case usagelog.FieldOverflowedFromGroupID:
+		return m.AddedOverflowedFromGroupID()
 	case usagelog.FieldInputTokens:
 		return m.AddedInputTokens()
 	case usagelog.FieldOutputTokens:
@@ -36919,6 +37451,13 @@ func (m *UsageLogMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddChannelID(v)
+		return nil
+	case usagelog.FieldOverflowedFromGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddOverflowedFromGroupID(v)
 		return nil
 	case usagelog.FieldInputTokens:
 		v, ok := value.(int)
@@ -37075,6 +37614,9 @@ func (m *UsageLogMutation) ClearedFields() []string {
 	if m.FieldCleared(usagelog.FieldGroupID) {
 		fields = append(fields, usagelog.FieldGroupID)
 	}
+	if m.FieldCleared(usagelog.FieldOverflowedFromGroupID) {
+		fields = append(fields, usagelog.FieldOverflowedFromGroupID)
+	}
 	if m.FieldCleared(usagelog.FieldSubscriptionID) {
 		fields = append(fields, usagelog.FieldSubscriptionID)
 	}
@@ -37130,6 +37672,9 @@ func (m *UsageLogMutation) ClearField(name string) error {
 		return nil
 	case usagelog.FieldGroupID:
 		m.ClearGroupID()
+		return nil
+	case usagelog.FieldOverflowedFromGroupID:
+		m.ClearOverflowedFromGroupID()
 		return nil
 	case usagelog.FieldSubscriptionID:
 		m.ClearSubscriptionID()
@@ -37195,6 +37740,9 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldGroupID:
 		m.ResetGroupID()
+		return nil
+	case usagelog.FieldOverflowedFromGroupID:
+		m.ResetOverflowedFromGroupID()
 		return nil
 	case usagelog.FieldSubscriptionID:
 		m.ResetSubscriptionID()

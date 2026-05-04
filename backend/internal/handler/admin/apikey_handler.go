@@ -24,8 +24,10 @@ func NewAdminAPIKeyHandler(adminService service.AdminService) *AdminAPIKeyHandle
 
 // AdminUpdateAPIKeyGroupRequest represents the request to update an API key.
 type AdminUpdateAPIKeyGroupRequest struct {
-	GroupID             *int64 `json:"group_id"`               // nil=不修改, 0=解绑, >0=绑定到目标分组
-	ResetRateLimitUsage *bool  `json:"reset_rate_limit_usage"` // true=重置 5h/1d/7d 限速用量
+	GroupID                   *int64 `json:"group_id"`                      // nil=不修改, 0=解绑, >0=绑定到目标分组
+	QuotaShareOverflowGroupID *int64 `json:"quota_share_overflow_group_id"` // nil=不修改, 0=清空, >0=设置 quota_share 超限兜底分组
+	ResetRateLimitUsage       *bool  `json:"reset_rate_limit_usage"`        // true=重置 5h/1d/7d 限速用量
+	QuotaWeight               *int   `json:"quota_weight"`                  // nil=不修改, >0=设置 quota_share 权重
 }
 
 // UpdateGroup handles updating an API key's admin-managed fields.
@@ -52,12 +54,31 @@ func (h *AdminAPIKeyHandler) UpdateGroup(c *gin.Context) {
 		}
 	}
 
+	if req.QuotaWeight != nil {
+		wKey, wErr := h.adminService.AdminUpdateAPIKeyQuotaWeight(c.Request.Context(), keyID, *req.QuotaWeight)
+		if wErr != nil {
+			response.ErrorFrom(c, wErr)
+			return
+		}
+		if resetKey == nil && req.GroupID == nil {
+			resetKey = wKey
+		}
+	}
+
 	result, err := h.adminService.AdminUpdateAPIKeyGroupID(c.Request.Context(), keyID, req.GroupID)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	if resetKey != nil && req.GroupID == nil {
+	if req.QuotaShareOverflowGroupID != nil {
+		updatedKey, overflowErr := h.adminService.AdminUpdateAPIKeyQuotaShareOverflowGroupID(c.Request.Context(), keyID, req.QuotaShareOverflowGroupID)
+		if overflowErr != nil {
+			response.ErrorFrom(c, overflowErr)
+			return
+		}
+		result.APIKey = updatedKey
+	}
+	if resetKey != nil && req.GroupID == nil && req.QuotaShareOverflowGroupID == nil {
 		result.APIKey = resetKey
 	}
 

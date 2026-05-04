@@ -87,7 +87,7 @@ type CreateGroupRequest struct {
 	Platform         string             `json:"platform" binding:"omitempty,oneof=anthropic openai gemini antigravity"`
 	RateMultiplier   float64            `json:"rate_multiplier"`
 	IsExclusive      bool               `json:"is_exclusive"`
-	SubscriptionType string             `json:"subscription_type" binding:"omitempty,oneof=standard subscription"`
+	SubscriptionType string             `json:"subscription_type" binding:"omitempty,oneof=standard subscription quota_share"`
 	DailyLimitUSD    optionalLimitField `json:"daily_limit_usd"`
 	WeeklyLimitUSD   optionalLimitField `json:"weekly_limit_usd"`
 	MonthlyLimitUSD  optionalLimitField `json:"monthly_limit_usd"`
@@ -114,6 +114,9 @@ type CreateGroupRequest struct {
 	RPMLimit int `json:"rpm_limit"`
 	// 从指定分组复制账号（创建后自动绑定）
 	CopyAccountsFromGroupIDs []int64 `json:"copy_accounts_from_group_ids"`
+	// Quota Share 估算限额（仅 quota_share 分组使用）
+	Estimated5hLimitUSD *float64 `json:"estimated_5h_limit_usd"`
+	Estimated7dLimitUSD *float64 `json:"estimated_7d_limit_usd"`
 }
 
 // UpdateGroupRequest represents update group request
@@ -124,7 +127,7 @@ type UpdateGroupRequest struct {
 	RateMultiplier   *float64           `json:"rate_multiplier"`
 	IsExclusive      *bool              `json:"is_exclusive"`
 	Status           string             `json:"status" binding:"omitempty,oneof=active inactive"`
-	SubscriptionType string             `json:"subscription_type" binding:"omitempty,oneof=standard subscription"`
+	SubscriptionType string             `json:"subscription_type" binding:"omitempty,oneof=standard subscription quota_share"`
 	DailyLimitUSD    optionalLimitField `json:"daily_limit_usd"`
 	WeeklyLimitUSD   optionalLimitField `json:"weekly_limit_usd"`
 	MonthlyLimitUSD  optionalLimitField `json:"monthly_limit_usd"`
@@ -151,6 +154,9 @@ type UpdateGroupRequest struct {
 	RPMLimit *int `json:"rpm_limit"`
 	// 从指定分组复制账号（同步操作：先清空当前分组的账号绑定，再绑定源分组的账号）
 	CopyAccountsFromGroupIDs []int64 `json:"copy_accounts_from_group_ids"`
+	// Quota Share 估算限额（仅 quota_share 分组使用；nil = 不改动）
+	Estimated5hLimitUSD *float64 `json:"estimated_5h_limit_usd"`
+	Estimated7dLimitUSD *float64 `json:"estimated_7d_limit_usd"`
 }
 
 // List handles listing all groups with pagination
@@ -268,6 +274,8 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		MessagesDispatchModelConfig:     req.MessagesDispatchModelConfig,
 		RPMLimit:                        req.RPMLimit,
 		CopyAccountsFromGroupIDs:        req.CopyAccountsFromGroupIDs,
+		Estimated5hLimitUSD:             req.Estimated5hLimitUSD,
+		Estimated7dLimitUSD:             req.Estimated7dLimitUSD,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -320,6 +328,8 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		MessagesDispatchModelConfig:     req.MessagesDispatchModelConfig,
 		RPMLimit:                        req.RPMLimit,
 		CopyAccountsFromGroupIDs:        req.CopyAccountsFromGroupIDs,
+		Estimated5hLimitUSD:             req.Estimated5hLimitUSD,
+		Estimated7dLimitUSD:             req.Estimated7dLimitUSD,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -536,6 +546,11 @@ type UpdateSortOrderRequest struct {
 	} `json:"updates" binding:"required,min=1"`
 }
 
+type QuotaShareCalibrationActionRequest struct {
+	Window string `json:"window" binding:"omitempty,oneof=5h 7d all"`
+	Reason string `json:"reason"`
+}
+
 // UpdateSortOrder handles updating group sort orders
 // PUT /api/v1/admin/groups/sort-order
 func (h *GroupHandler) UpdateSortOrder(c *gin.Context) {
@@ -559,4 +574,105 @@ func (h *GroupHandler) UpdateSortOrder(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{"message": "Sort order updated successfully"})
+}
+
+// GetQuotaShareStatus returns real-time Redis state for a quota_share group.
+// GET /api/v1/admin/groups/:id/quota-share-status
+func (h *GroupHandler) GetQuotaShareStatus(c *gin.Context) {
+	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid group ID")
+		return
+	}
+
+	status, err := h.adminService.GetQuotaShareStatus(c.Request.Context(), groupID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, status)
+}
+
+// GetQuotaShareCalibrationStatus returns pending calibration suggestions for a quota_share group.
+// GET /api/v1/admin/groups/:id/quota-share-calibration
+func (h *GroupHandler) GetQuotaShareCalibrationStatus(c *gin.Context) {
+	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid group ID")
+		return
+	}
+
+	status, err := h.adminService.GetQuotaShareCalibrationStatus(c.Request.Context(), groupID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, status)
+}
+
+// ApplyQuotaShareCalibrationSuggestion applies pending suggestions to formal estimates.
+// POST /api/v1/admin/groups/:id/quota-share-calibration/apply
+func (h *GroupHandler) ApplyQuotaShareCalibrationSuggestion(c *gin.Context) {
+	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid group ID")
+		return
+	}
+
+	var req QuotaShareCalibrationActionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	if req.Window == "" {
+		req.Window = "all"
+	}
+
+	group, err := h.adminService.ApplyQuotaShareCalibrationSuggestion(c.Request.Context(), groupID, req.Window)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, group)
+}
+
+// DiscardQuotaShareCalibrationSuggestion discards pending calibration suggestions.
+// POST /api/v1/admin/groups/:id/quota-share-calibration/discard
+func (h *GroupHandler) DiscardQuotaShareCalibrationSuggestion(c *gin.Context) {
+	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid group ID")
+		return
+	}
+
+	var req QuotaShareCalibrationActionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	if req.Window == "" {
+		req.Window = "all"
+	}
+
+	group, err := h.adminService.DiscardQuotaShareCalibrationSuggestion(c.Request.Context(), groupID, req.Window, req.Reason)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, group)
+}
+
+// GetQuotaShareCalibrationReminder returns lightweight admin reminder status.
+// GET /api/v1/admin/groups/quota-share-calibration-reminder
+func (h *GroupHandler) GetQuotaShareCalibrationReminder(c *gin.Context) {
+	status, err := h.adminService.GetQuotaShareCalibrationReminder(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, status)
 }

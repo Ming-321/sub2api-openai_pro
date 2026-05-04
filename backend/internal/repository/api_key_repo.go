@@ -28,6 +28,11 @@ func NewAPIKeyRepository(client *dbent.Client, sqlDB *sql.DB) service.APIKeyRepo
 	return newAPIKeyRepositoryWithSQL(client, sqlDB)
 }
 
+// NewQuotaShareKeyRepository returns a repository satisfying the QuotaShareKeyRepository interface.
+func NewQuotaShareKeyRepository(client *dbent.Client, sqlDB *sql.DB) service.QuotaShareKeyRepository {
+	return newAPIKeyRepositoryWithSQL(client, sqlDB)
+}
+
 func newAPIKeyRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor) *apiKeyRepository {
 	return &apiKeyRepository{client: client, sql: sqlq}
 }
@@ -50,7 +55,9 @@ func (r *apiKeyRepository) Create(ctx context.Context, key *service.APIKey) erro
 		SetNillableExpiresAt(key.ExpiresAt).
 		SetRateLimit5h(key.RateLimit5h).
 		SetRateLimit1d(key.RateLimit1d).
-		SetRateLimit7d(key.RateLimit7d)
+		SetRateLimit7d(key.RateLimit7d).
+		SetQuotaWeight(key.QuotaWeight).
+		SetNillableQuotaShareOverflowGroupID(key.QuotaShareOverflowGroupID)
 
 	if len(key.IPWhitelist) > 0 {
 		builder.SetIPWhitelist(key.IPWhitelist)
@@ -134,6 +141,8 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 			apikey.FieldRateLimit5h,
 			apikey.FieldRateLimit1d,
 			apikey.FieldRateLimit7d,
+			apikey.FieldQuotaWeight,
+			apikey.FieldQuotaShareOverflowGroupID,
 		).
 		WithUser(func(q *dbent.UserQuery) {
 			q.Select(
@@ -209,6 +218,7 @@ func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey) erro
 		SetRateLimit5h(key.RateLimit5h).
 		SetRateLimit1d(key.RateLimit1d).
 		SetRateLimit7d(key.RateLimit7d).
+		SetQuotaWeight(key.QuotaWeight).
 		SetUsage5h(key.Usage5h).
 		SetUsage1d(key.Usage1d).
 		SetUsage7d(key.Usage7d).
@@ -217,6 +227,11 @@ func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey) erro
 		builder.SetGroupID(*key.GroupID)
 	} else {
 		builder.ClearGroupID()
+	}
+	if key.QuotaShareOverflowGroupID != nil {
+		builder.SetQuotaShareOverflowGroupID(*key.QuotaShareOverflowGroupID)
+	} else {
+		builder.ClearQuotaShareOverflowGroupID()
 	}
 
 	// Expiration time
@@ -584,6 +599,16 @@ func (r *apiKeyRepository) ResetRateLimitWindows(ctx context.Context, id int64) 
 	return err
 }
 
+// GetTotalQuotaWeight returns the sum of quota_weight for all active, non-deleted keys in a group.
+func (r *apiKeyRepository) GetTotalQuotaWeight(ctx context.Context, groupID int64) (int, error) {
+	var total int
+	err := scanSingleRow(ctx, r.sql,
+		`SELECT COALESCE(SUM(quota_weight), 0) FROM api_keys WHERE group_id = $1 AND status = 'active' AND deleted_at IS NULL`,
+		[]any{groupID},
+		&total)
+	return total, err
+}
+
 // GetRateLimitData returns the current rate limit usage and window start times for an API key.
 func (r *apiKeyRepository) GetRateLimitData(ctx context.Context, id int64) (result *service.APIKeyRateLimitData, err error) {
 	rows, err := r.sql.QueryContext(ctx, `
@@ -614,29 +639,31 @@ func apiKeyEntityToService(m *dbent.APIKey) *service.APIKey {
 		return nil
 	}
 	out := &service.APIKey{
-		ID:            m.ID,
-		UserID:        m.UserID,
-		Key:           m.Key,
-		Name:          m.Name,
-		Status:        m.Status,
-		IPWhitelist:   m.IPWhitelist,
-		IPBlacklist:   m.IPBlacklist,
-		LastUsedAt:    m.LastUsedAt,
-		CreatedAt:     m.CreatedAt,
-		UpdatedAt:     m.UpdatedAt,
-		GroupID:       m.GroupID,
-		Quota:         m.Quota,
-		QuotaUsed:     m.QuotaUsed,
-		ExpiresAt:     m.ExpiresAt,
-		RateLimit5h:   m.RateLimit5h,
-		RateLimit1d:   m.RateLimit1d,
-		RateLimit7d:   m.RateLimit7d,
-		Usage5h:       m.Usage5h,
-		Usage1d:       m.Usage1d,
-		Usage7d:       m.Usage7d,
-		Window5hStart: m.Window5hStart,
-		Window1dStart: m.Window1dStart,
-		Window7dStart: m.Window7dStart,
+		ID:                        m.ID,
+		UserID:                    m.UserID,
+		Key:                       m.Key,
+		Name:                      m.Name,
+		Status:                    m.Status,
+		IPWhitelist:               m.IPWhitelist,
+		IPBlacklist:               m.IPBlacklist,
+		LastUsedAt:                m.LastUsedAt,
+		CreatedAt:                 m.CreatedAt,
+		UpdatedAt:                 m.UpdatedAt,
+		GroupID:                   m.GroupID,
+		QuotaShareOverflowGroupID: m.QuotaShareOverflowGroupID,
+		Quota:                     m.Quota,
+		QuotaUsed:                 m.QuotaUsed,
+		ExpiresAt:                 m.ExpiresAt,
+		QuotaWeight:               m.QuotaWeight,
+		RateLimit5h:               m.RateLimit5h,
+		RateLimit1d:               m.RateLimit1d,
+		RateLimit7d:               m.RateLimit7d,
+		Usage5h:                   m.Usage5h,
+		Usage1d:                   m.Usage1d,
+		Usage7d:                   m.Usage7d,
+		Window5hStart:             m.Window5hStart,
+		Window1dStart:             m.Window1dStart,
+		Window7dStart:             m.Window7dStart,
 	}
 	if m.Edges.User != nil {
 		out.User = userEntityToService(m.Edges.User)
@@ -717,6 +744,9 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 		DefaultMappedModel:              g.DefaultMappedModel,
 		MessagesDispatchModelConfig:     g.MessagesDispatchModelConfig,
 		RPMLimit:                        g.RpmLimit,
+		Estimated5hLimitUSD:             g.Estimated5hLimitUsd,
+		Estimated7dLimitUSD:             g.Estimated7dLimitUsd,
+		CalibrationState:                g.CalibrationState,
 		CreatedAt:                       g.CreatedAt,
 		UpdatedAt:                       g.UpdatedAt,
 	}

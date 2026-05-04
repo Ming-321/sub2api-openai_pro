@@ -56,6 +56,7 @@ const props = withDefaults(defineProps<Props>(), {
 const { t } = useI18n()
 
 const isSubscription = computed(() => props.subscriptionType === 'subscription')
+const isQuotaShare = computed(() => props.subscriptionType === 'quota_share')
 
 // 是否有专属倍率（且与默认倍率不同）
 const hasCustomRate = computed(() => {
@@ -71,7 +72,7 @@ const hasCustomRate = computed(() => {
 const showLabel = computed(() => {
   if (!props.showRate) return false
   // 订阅类型：显示天数或"订阅"
-  if (isSubscription.value) return true
+  if (isSubscription.value || isQuotaShare.value) return true
   // 标准类型：显示倍率（包括专属倍率）
   return props.rateMultiplier !== undefined || hasCustomRate.value
 })
@@ -79,6 +80,9 @@ const showLabel = computed(() => {
 // Label text
 const labelText = computed(() => {
   const rateLabel = props.rateMultiplier !== undefined ? `${props.rateMultiplier}x` : ''
+  if (isQuotaShare.value) {
+    return t('groups.quotaShare')
+  }
   if (isSubscription.value && !props.alwaysShowRate) {
     // 如果有剩余天数，显示天数
     if (props.daysRemaining !== null && props.daysRemaining !== undefined) {
@@ -96,6 +100,10 @@ const labelText = computed(() => {
 // Label style based on type and days remaining
 const labelClass = computed(() => {
   const base = 'px-1.5 py-0.5 rounded text-[10px] font-semibold'
+
+  if (isQuotaShare.value) {
+    return `${base} bg-sky-200/80 text-sky-800 dark:bg-sky-800/50 dark:text-sky-300`
+  }
 
   if (!isSubscription.value) {
     // Standard: subtle background (不再为专属倍率使用不同的背景色)
@@ -136,17 +144,23 @@ const badgeClass = computed(() => {
       : 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400'
   } else if (props.platform === 'openai') {
     // OpenAI: green theme
-    return isSubscription.value
+    return isQuotaShare.value
+      ? 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400'
+      : isSubscription.value
       ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
       : 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400'
   }
   if (props.platform === 'gemini') {
-    return isSubscription.value
+    return isQuotaShare.value
+      ? 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400'
+      : isSubscription.value
       ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
       : 'bg-sky-50 text-sky-700 dark:bg-sky-900/20 dark:text-sky-400'
   }
   // Fallback: original colors
-  return isSubscription.value
+  return isQuotaShare.value
+    ? 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400'
+    : isSubscription.value
     ? 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400'
     : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
 })

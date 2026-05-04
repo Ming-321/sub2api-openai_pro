@@ -115,6 +115,11 @@ func GroupID(v int64) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldGroupID, v))
 }
 
+// OverflowedFromGroupID applies equality check predicate on the "overflowed_from_group_id" field. It's identical to OverflowedFromGroupIDEQ.
+func OverflowedFromGroupID(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldOverflowedFromGroupID, v))
+}
+
 // SubscriptionID applies equality check predicate on the "subscription_id" field. It's identical to SubscriptionIDEQ.
 func SubscriptionID(v int64) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldSubscriptionID, v))
@@ -883,6 +888,56 @@ func GroupIDIsNil() predicate.UsageLog {
 // GroupIDNotNil applies the NotNil predicate on the "group_id" field.
 func GroupIDNotNil() predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldNotNull(FieldGroupID))
+}
+
+// OverflowedFromGroupIDEQ applies the EQ predicate on the "overflowed_from_group_id" field.
+func OverflowedFromGroupIDEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldOverflowedFromGroupID, v))
+}
+
+// OverflowedFromGroupIDNEQ applies the NEQ predicate on the "overflowed_from_group_id" field.
+func OverflowedFromGroupIDNEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldOverflowedFromGroupID, v))
+}
+
+// OverflowedFromGroupIDIn applies the In predicate on the "overflowed_from_group_id" field.
+func OverflowedFromGroupIDIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldOverflowedFromGroupID, vs...))
+}
+
+// OverflowedFromGroupIDNotIn applies the NotIn predicate on the "overflowed_from_group_id" field.
+func OverflowedFromGroupIDNotIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldOverflowedFromGroupID, vs...))
+}
+
+// OverflowedFromGroupIDGT applies the GT predicate on the "overflowed_from_group_id" field.
+func OverflowedFromGroupIDGT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldOverflowedFromGroupID, v))
+}
+
+// OverflowedFromGroupIDGTE applies the GTE predicate on the "overflowed_from_group_id" field.
+func OverflowedFromGroupIDGTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldOverflowedFromGroupID, v))
+}
+
+// OverflowedFromGroupIDLT applies the LT predicate on the "overflowed_from_group_id" field.
+func OverflowedFromGroupIDLT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldOverflowedFromGroupID, v))
+}
+
+// OverflowedFromGroupIDLTE applies the LTE predicate on the "overflowed_from_group_id" field.
+func OverflowedFromGroupIDLTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldOverflowedFromGroupID, v))
+}
+
+// OverflowedFromGroupIDIsNil applies the IsNil predicate on the "overflowed_from_group_id" field.
+func OverflowedFromGroupIDIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldOverflowedFromGroupID))
+}
+
+// OverflowedFromGroupIDNotNil applies the NotNil predicate on the "overflowed_from_group_id" field.
+func OverflowedFromGroupIDNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldOverflowedFromGroupID))
 }
 
 // SubscriptionIDEQ applies the EQ predicate on the "subscription_id" field.

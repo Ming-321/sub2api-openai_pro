@@ -249,6 +249,33 @@ func (_u *UsageLogUpdate) ClearGroupID() *UsageLogUpdate {
 	return _u
 }
 
+// SetOverflowedFromGroupID sets the "overflowed_from_group_id" field.
+func (_u *UsageLogUpdate) SetOverflowedFromGroupID(v int64) *UsageLogUpdate {
+	_u.mutation.ResetOverflowedFromGroupID()
+	_u.mutation.SetOverflowedFromGroupID(v)
+	return _u
+}
+
+// SetNillableOverflowedFromGroupID sets the "overflowed_from_group_id" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableOverflowedFromGroupID(v *int64) *UsageLogUpdate {
+	if v != nil {
+		_u.SetOverflowedFromGroupID(*v)
+	}
+	return _u
+}
+
+// AddOverflowedFromGroupID adds value to the "overflowed_from_group_id" field.
+func (_u *UsageLogUpdate) AddOverflowedFromGroupID(v int64) *UsageLogUpdate {
+	_u.mutation.AddOverflowedFromGroupID(v)
+	return _u
+}
+
+// ClearOverflowedFromGroupID clears the value of the "overflowed_from_group_id" field.
+func (_u *UsageLogUpdate) ClearOverflowedFromGroupID() *UsageLogUpdate {
+	_u.mutation.ClearOverflowedFromGroupID()
+	return _u
+}
+
 // SetSubscriptionID sets the "subscription_id" field.
 func (_u *UsageLogUpdate) SetSubscriptionID(v int64) *UsageLogUpdate {
 	_u.mutation.SetSubscriptionID(v)
@@ -961,6 +988,15 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if _u.mutation.BillingModeCleared() {
 		_spec.ClearField(usagelog.FieldBillingMode, field.TypeString)
 	}
+	if value, ok := _u.mutation.OverflowedFromGroupID(); ok {
+		_spec.SetField(usagelog.FieldOverflowedFromGroupID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedOverflowedFromGroupID(); ok {
+		_spec.AddField(usagelog.FieldOverflowedFromGroupID, field.TypeInt64, value)
+	}
+	if _u.mutation.OverflowedFromGroupIDCleared() {
+		_spec.ClearField(usagelog.FieldOverflowedFromGroupID, field.TypeInt64)
+	}
 	if value, ok := _u.mutation.InputTokens(); ok {
 		_spec.SetField(usagelog.FieldInputTokens, field.TypeInt, value)
 	}
@@ -1481,6 +1517,33 @@ func (_u *UsageLogUpdateOne) SetNillableGroupID(v *int64) *UsageLogUpdateOne {
 // ClearGroupID clears the value of the "group_id" field.
 func (_u *UsageLogUpdateOne) ClearGroupID() *UsageLogUpdateOne {
 	_u.mutation.ClearGroupID()
+	return _u
+}
+
+// SetOverflowedFromGroupID sets the "overflowed_from_group_id" field.
+func (_u *UsageLogUpdateOne) SetOverflowedFromGroupID(v int64) *UsageLogUpdateOne {
+	_u.mutation.ResetOverflowedFromGroupID()
+	_u.mutation.SetOverflowedFromGroupID(v)
+	return _u
+}
+
+// SetNillableOverflowedFromGroupID sets the "overflowed_from_group_id" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableOverflowedFromGroupID(v *int64) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetOverflowedFromGroupID(*v)
+	}
+	return _u
+}
+
+// AddOverflowedFromGroupID adds value to the "overflowed_from_group_id" field.
+func (_u *UsageLogUpdateOne) AddOverflowedFromGroupID(v int64) *UsageLogUpdateOne {
+	_u.mutation.AddOverflowedFromGroupID(v)
+	return _u
+}
+
+// ClearOverflowedFromGroupID clears the value of the "overflowed_from_group_id" field.
+func (_u *UsageLogUpdateOne) ClearOverflowedFromGroupID() *UsageLogUpdateOne {
+	_u.mutation.ClearOverflowedFromGroupID()
 	return _u
 }
 
@@ -2225,6 +2288,15 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if _u.mutation.BillingModeCleared() {
 		_spec.ClearField(usagelog.FieldBillingMode, field.TypeString)
+	}
+	if value, ok := _u.mutation.OverflowedFromGroupID(); ok {
+		_spec.SetField(usagelog.FieldOverflowedFromGroupID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedOverflowedFromGroupID(); ok {
+		_spec.AddField(usagelog.FieldOverflowedFromGroupID, field.TypeInt64, value)
+	}
+	if _u.mutation.OverflowedFromGroupIDCleared() {
+		_spec.ClearField(usagelog.FieldOverflowedFromGroupID, field.TypeInt64)
 	}
 	if value, ok := _u.mutation.InputTokens(); ok {
 		_spec.SetField(usagelog.FieldInputTokens, field.TypeInt, value)

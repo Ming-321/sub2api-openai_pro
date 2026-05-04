@@ -81,6 +81,12 @@ type Group struct {
 	MessagesDispatchModelConfig domain.OpenAIMessagesDispatchModelConfig `json:"messages_dispatch_model_config,omitempty"`
 	// 分组 RPM 上限，0 表示不限制；设置后接管该分组用户的限流
 	RpmLimit int `json:"rpm_limit,omitempty"`
+	// Estimated upstream 5h window limit in USD (quota_share mode)
+	Estimated5hLimitUsd float64 `json:"estimated_5h_limit_usd,omitempty"`
+	// Estimated upstream 7d window limit in USD (quota_share mode)
+	Estimated7dLimitUsd float64 `json:"estimated_7d_limit_usd,omitempty"`
+	// EMA calibration state for quota_share estimated limits
+	CalibrationState *domain.QuotaShareCalibrationState `json:"calibration_state,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the GroupQuery when eager-loading is set.
 	Edges        GroupEdges `json:"edges"`
@@ -187,11 +193,11 @@ func (*Group) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case group.FieldModelRouting, group.FieldSupportedModelScopes, group.FieldMessagesDispatchModelConfig:
+		case group.FieldModelRouting, group.FieldSupportedModelScopes, group.FieldMessagesDispatchModelConfig, group.FieldCalibrationState:
 			values[i] = new([]byte)
 		case group.FieldIsExclusive, group.FieldClaudeCodeOnly, group.FieldModelRoutingEnabled, group.FieldMcpXMLInject, group.FieldAllowMessagesDispatch, group.FieldRequireOauthOnly, group.FieldRequirePrivacySet:
 			values[i] = new(sql.NullBool)
-		case group.FieldRateMultiplier, group.FieldDailyLimitUsd, group.FieldWeeklyLimitUsd, group.FieldMonthlyLimitUsd, group.FieldImagePrice1k, group.FieldImagePrice2k, group.FieldImagePrice4k:
+		case group.FieldRateMultiplier, group.FieldDailyLimitUsd, group.FieldWeeklyLimitUsd, group.FieldMonthlyLimitUsd, group.FieldImagePrice1k, group.FieldImagePrice2k, group.FieldImagePrice4k, group.FieldEstimated5hLimitUsd, group.FieldEstimated7dLimitUsd:
 			values[i] = new(sql.NullFloat64)
 		case group.FieldID, group.FieldDefaultValidityDays, group.FieldFallbackGroupID, group.FieldFallbackGroupIDOnInvalidRequest, group.FieldSortOrder, group.FieldRpmLimit:
 			values[i] = new(sql.NullInt64)
@@ -422,6 +428,26 @@ func (_m *Group) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.RpmLimit = int(value.Int64)
 			}
+		case group.FieldEstimated5hLimitUsd:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field estimated_5h_limit_usd", values[i])
+			} else if value.Valid {
+				_m.Estimated5hLimitUsd = value.Float64
+			}
+		case group.FieldEstimated7dLimitUsd:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field estimated_7d_limit_usd", values[i])
+			} else if value.Valid {
+				_m.Estimated7dLimitUsd = value.Float64
+			}
+		case group.FieldCalibrationState:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field calibration_state", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.CalibrationState); err != nil {
+					return fmt.Errorf("unmarshal field calibration_state: %w", err)
+				}
+			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
 		}
@@ -610,6 +636,15 @@ func (_m *Group) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("rpm_limit=")
 	builder.WriteString(fmt.Sprintf("%v", _m.RpmLimit))
+	builder.WriteString(", ")
+	builder.WriteString("estimated_5h_limit_usd=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Estimated5hLimitUsd))
+	builder.WriteString(", ")
+	builder.WriteString("estimated_7d_limit_usd=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Estimated7dLimitUsd))
+	builder.WriteString(", ")
+	builder.WriteString("calibration_state=")
+	builder.WriteString(fmt.Sprintf("%v", _m.CalibrationState))
 	builder.WriteByte(')')
 	return builder.String()
 }

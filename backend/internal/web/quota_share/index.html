@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>配额用量查询</title>
+<link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+<style>
+  body{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#e2e8f0}
+  .card{background:#1e293b;border:1px solid #334155;border-radius:.75rem;padding:1.5rem}
+  .bar-bg{background:#334155;border-radius:9999px;height:.625rem}
+  .bar-fill{border-radius:9999px;height:.625rem;transition:width .4s}
+  .bar-ok{background:linear-gradient(90deg,#22d3ee,#3b82f6)}
+  .bar-warn{background:linear-gradient(90deg,#facc15,#f97316)}
+  .bar-danger{background:linear-gradient(90deg,#f97316,#ef4444)}
+  .pulse{animation:pulse 2s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+  input:focus{outline:none;box-shadow:0 0 0 2px #3b82f6}
+</style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+<div class="w-full max-w-lg space-y-6">
+  <div class="text-center space-y-1">
+    <h1 class="text-2xl font-bold text-white">配额用量查询</h1>
+    <p class="text-sm text-gray-400">输入你的 API Key 查看当前用量和限额</p>
+  </div>
+
+  <div class="card">
+    <div class="flex gap-2">
+      <input id="apiKeyInput" type="password" placeholder="sk-..." class="flex-1 bg-gray-800 border border-gray-600 rounded-lg px-4 py-2.5 text-sm text-white placeholder-gray-500">
+      <button id="queryBtn" onclick="fetchUsage()" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-5 py-2.5 rounded-lg transition">查询</button>
+    </div>
+    <label class="flex items-center gap-2 mt-3 text-xs text-gray-400 cursor-pointer select-none">
+      <input id="autoRefresh" type="checkbox" class="rounded"> 每 30 秒自动刷新
+    </label>
+  </div>
+
+  <div id="result" class="hidden space-y-4"></div>
+  <div id="error" class="hidden card border-red-800 text-red-400 text-sm"></div>
+</div>
+
+<script>
+let timer=null;
+const $=id=>document.getElementById(id);
+
+function saveKey(){localStorage.setItem('qs_key',$('apiKeyInput').value)}
+function loadKey(){const k=localStorage.getItem('qs_key');if(k)$('apiKeyInput').value=k}
+
+$('autoRefresh').addEventListener('change',e=>{
+  clearInterval(timer);
+  if(e.target.checked){timer=setInterval(fetchUsage,30000)}
+});
+
+async function fetchUsage(){
+  const key=$('apiKeyInput').value.trim();
+  if(!key){$('error').textContent='请输入 API Key';$('error').classList.remove('hidden');return}
+  saveKey();
+  $('queryBtn').disabled=true;$('queryBtn').textContent='查询中…';
+  $('error').classList.add('hidden');
+  try{
+    const r=await fetch('/v1/usage',{headers:{'Authorization':'Bearer '+key}});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error?.message||'请求失败 ('+r.status+')');
+    if(d.mode!=='quota_share')throw new Error('此 Key 不属于 quota_share 分组（当前模式: '+d.mode+')');
+    render(d);
+  }catch(e){
+    $('error').textContent=e.message;$('error').classList.remove('hidden');$('result').classList.add('hidden');
+  }finally{$('queryBtn').disabled=false;$('queryBtn').textContent='查询'}
+}
+
+function render(d){
+  const rl=d.rate_limits||[];
+  const w5=rl.find(r=>r.window==='5h')||{};
+  const w7=rl.find(r=>r.window==='7d')||{};
+  const up=d.upstream||{};
+
+  $('result').innerHTML=`
+    <div class="card space-y-4">
+      <div class="flex justify-between items-center">
+        <span class="text-xs text-gray-400">权重</span>
+        <span class="text-sm font-mono text-white">${d.weight||1}</span>
+      </div>
+      ${windowCard('5 小时窗口',w5,up.used_5h_pct)}
+      ${windowCard('7 天窗口',w7,up.used_7d_pct)}
+      <p class="text-xs text-gray-500 text-right">更新于 ${new Date().toLocaleTimeString()}</p>
+    </div>`;
+  $('result').classList.remove('hidden');
+}
+
+function windowCard(label,w,upPct){
+  if(!w.limit&&!w.used)return '';
+  const pct=w.limit>0?Math.min(100,w.used/w.limit*100):0;
+  const cls=pct>90?'bar-danger':pct>70?'bar-warn':'bar-ok';
+  const reset=w.reset_at?timeUntil(new Date(w.reset_at)):'—';
+  return `
+  <div class="space-y-2 pt-3 border-t border-gray-700">
+    <div class="flex justify-between items-baseline">
+      <span class="text-sm font-medium text-white">${label}</span>
+      <span class="text-xs text-gray-400">重置于 ${reset}</span>
+    </div>
+    <div class="bar-bg"><div class="${cls} bar-fill" style="width:${pct}%"></div></div>
+    <div class="flex justify-between text-xs text-gray-400">
+      <span>已用 $${w.used?.toFixed(2)||'0.00'}</span>
+      <span>限额 $${w.limit?.toFixed(2)||'0.00'}</span>
+      <span>剩余 $${w.remaining?.toFixed(2)||'0.00'}</span>
+    </div>
+    ${upPct!=null?`<div class="text-xs text-gray-500">上游已用 ${upPct.toFixed(1)}%</div>`:''}
+  </div>`;
+}
+
+function timeUntil(t){
+  const s=Math.max(0,Math.floor((t-Date.now())/1000));
+  if(s<=0)return '已过期';
+  const h=Math.floor(s/3600),m=Math.floor((s%3600)/60);
+  return h>0?`${h}h ${m}m`:`${m}m`;
+}
+
+loadKey();
+</script>
+</body>
+</html>

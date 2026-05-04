@@ -9,7 +9,10 @@ import type {
   GroupPlatform,
   CreateGroupRequest,
   UpdateGroupRequest,
-  PaginatedResponse
+  PaginatedResponse,
+  QuotaShareCalibrationReminderResponse,
+  QuotaShareCalibrationStatusResponse,
+  QuotaShareStatusResponse
 } from '@/types'
 
 /**
@@ -152,6 +155,43 @@ export async function getGroupApiKeys(
   const { data } = await apiClient.get<PaginatedResponse<any>>(`/admin/groups/${id}/api-keys`, {
     params: { page, page_size: pageSize }
   })
+  return data
+}
+
+export async function getQuotaShareStatus(id: number): Promise<QuotaShareStatusResponse> {
+  const { data } = await apiClient.get<QuotaShareStatusResponse>(`/admin/groups/${id}/quota-share-status`)
+  return data
+}
+
+export async function getQuotaShareCalibrationStatus(id: number): Promise<QuotaShareCalibrationStatusResponse> {
+  const { data } = await apiClient.get<QuotaShareCalibrationStatusResponse>(`/admin/groups/${id}/quota-share-calibration`)
+  return data
+}
+
+export async function applyQuotaShareCalibration(
+  id: number,
+  window: '5h' | '7d' | 'all' = 'all'
+): Promise<AdminGroup> {
+  const { data } = await apiClient.post<AdminGroup>(`/admin/groups/${id}/quota-share-calibration/apply`, {
+    window
+  })
+  return data
+}
+
+export async function discardQuotaShareCalibration(
+  id: number,
+  window: '5h' | '7d' | 'all' = 'all',
+  reason?: string
+): Promise<AdminGroup> {
+  const { data } = await apiClient.post<AdminGroup>(`/admin/groups/${id}/quota-share-calibration/discard`, {
+    window,
+    reason
+  })
+  return data
+}
+
+export async function getQuotaShareCalibrationReminder(): Promise<QuotaShareCalibrationReminderResponse> {
+  const { data } = await apiClient.get<QuotaShareCalibrationReminderResponse>('/admin/groups/quota-share-calibration-reminder')
   return data
 }
 
@@ -312,6 +352,11 @@ export const groupsAPI = {
   toggleStatus,
   getStats,
   getGroupApiKeys,
+  getQuotaShareStatus,
+  getQuotaShareCalibrationStatus,
+  applyQuotaShareCalibration,
+  discardQuotaShareCalibration,
+  getQuotaShareCalibrationReminder,
   getGroupRateMultipliers,
   clearGroupRateMultipliers,
   batchSetGroupRateMultipliers,

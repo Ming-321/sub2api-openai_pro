@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
@@ -163,6 +165,9 @@ type CreateAPIKeyRequest struct {
 	RateLimit5h float64 `json:"rate_limit_5h"`
 	RateLimit1d float64 `json:"rate_limit_1d"`
 	RateLimit7d float64 `json:"rate_limit_7d"`
+
+	// Quota share weight (only for quota_share groups, default 1)
+	QuotaWeight *int `json:"quota_weight"`
 }
 
 // UpdateAPIKeyRequest 更新API Key请求
@@ -184,6 +189,9 @@ type UpdateAPIKeyRequest struct {
 	RateLimit1d         *float64 `json:"rate_limit_1d"`
 	RateLimit7d         *float64 `json:"rate_limit_7d"`
 	ResetRateLimitUsage *bool    `json:"reset_rate_limit_usage"` // Reset all usage counters to 0
+
+	// Quota share weight (nil = no change)
+	QuotaWeight *int `json:"quota_weight"`
 }
 
 // APIKeyService API Key服务
@@ -200,12 +208,141 @@ type APIKeyService struct {
 	userGroupRateRepo     UserGroupRateRepository
 	cache                 APIKeyCache
 	rateLimitCacheInvalid RateLimitCacheInvalidator // optional: invalidate Redis rate limit cache
+	quotaShareService     *QuotaShareService        // optional: invalidate weight cache
 	cfg                   *config.Config
 	authCacheL1           *ristretto.Cache
 	authCfg               apiKeyAuthCacheConfig
 	authGroup             singleflight.Group
 	lastUsedTouchL1       sync.Map // keyID -> nextAllowedAt(time.Time)
 	lastUsedTouchSF       singleflight.Group
+}
+
+type QuotaShareOverflowResolution struct {
+	ActiveAPIKey          *APIKey
+	ActiveGroup           *Group
+	Overflowed            bool
+	OverflowedFromGroupID *int64
+}
+
+// SetQuotaShareService injects the QuotaShareService (late binding).
+func (s *APIKeyService) SetQuotaShareService(qs *QuotaShareService) {
+	s.quotaShareService = qs
+}
+
+func (s *APIKeyService) ResolveQuotaShareOverflow(ctx context.Context, apiKey *APIKey, billingErr error) (*QuotaShareOverflowResolution, error) {
+	if !IsQuotaShareExceededError(billingErr) {
+		return nil, billingErr
+	}
+	resolution, err := s.resolveQuotaShareOverflow(ctx, apiKey)
+	if err != nil {
+		return nil, billingErr
+	}
+	if resolution == nil {
+		return nil, billingErr
+	}
+	return resolution, nil
+}
+
+func (s *APIKeyService) ResolveQuotaShareOverflowForAccountSelection(ctx context.Context, apiKey *APIKey) (*QuotaShareOverflowResolution, error) {
+	return s.resolveQuotaShareOverflow(ctx, apiKey)
+}
+
+func (s *APIKeyService) resolveQuotaShareOverflow(ctx context.Context, apiKey *APIKey) (*QuotaShareOverflowResolution, error) {
+	if apiKey == nil || apiKey.GroupID == nil || apiKey.Group == nil || !apiKey.Group.IsQuotaShareType() {
+		return nil, nil
+	}
+	if apiKey.QuotaShareOverflowGroupID == nil || *apiKey.QuotaShareOverflowGroupID <= 0 {
+		return nil, nil
+	}
+	if s == nil || s.groupRepo == nil {
+		err := errors.New("quota_share overflow resolver unavailable")
+		slog.Warn("quota_share overflow resolver unavailable", "api_key_id", apiKey.ID)
+		return nil, err
+	}
+
+	overflowGroup, err := s.groupRepo.GetByID(ctx, *apiKey.QuotaShareOverflowGroupID)
+	if err != nil {
+		slog.Warn("quota_share overflow group load failed",
+			"api_key_id", apiKey.ID,
+			"overflow_group_id", *apiKey.QuotaShareOverflowGroupID,
+			"error", err,
+		)
+		return nil, err
+	}
+	if err := validateQuotaShareOverflowGroup(apiKey.GroupID, overflowGroup); err != nil {
+		slog.Warn("quota_share overflow group invalid",
+			"api_key_id", apiKey.ID,
+			"overflow_group_id", overflowGroup.ID,
+			"error", err,
+		)
+		return nil, err
+	}
+
+	overflowGroupID := overflowGroup.ID
+	activeAPIKey := *apiKey
+	activeAPIKey.GroupID = &overflowGroupID
+	activeAPIKey.Group = overflowGroup
+	if apiKey.User != nil {
+		user := *apiKey.User
+		user.UserGroupRPMOverride = nil
+		activeAPIKey.User = &user
+	}
+	fromGroupID := *apiKey.GroupID
+	return &QuotaShareOverflowResolution{
+		ActiveAPIKey:          &activeAPIKey,
+		ActiveGroup:           overflowGroup,
+		Overflowed:            true,
+		OverflowedFromGroupID: &fromGroupID,
+	}, nil
+}
+
+func (s *APIKeyService) GetQuotaShareOverflowStatus(ctx context.Context, apiKey *APIKey) *QuotaShareOverflowStatus {
+	status := &QuotaShareOverflowStatus{
+		Configured: false,
+		Available:  false,
+		Reason:     "not_configured",
+	}
+	if apiKey == nil || apiKey.QuotaShareOverflowGroupID == nil || *apiKey.QuotaShareOverflowGroupID <= 0 {
+		return status
+	}
+
+	groupID := *apiKey.QuotaShareOverflowGroupID
+	status.Configured = true
+	status.GroupID = &groupID
+
+	if s == nil || s.groupRepo == nil {
+		status.Reason = "resolver_unavailable"
+		return status
+	}
+	group, err := s.groupRepo.GetByID(ctx, groupID)
+	if err != nil || group == nil {
+		status.Reason = "group_not_found"
+		return status
+	}
+
+	status.GroupName = group.Name
+	status.Platform = group.Platform
+	status.SubscriptionType = group.SubscriptionType
+	if err := validateQuotaShareOverflowGroup(apiKey.GroupID, group); err != nil {
+		status.Reason = "group_unavailable"
+		return status
+	}
+	if apiKey.IsExpired() {
+		status.Reason = "api_key_expired"
+		return status
+	}
+	if apiKey.IsQuotaExhausted() {
+		status.Reason = "api_key_quota_exhausted"
+		return status
+	}
+	if apiKey.User != nil && apiKey.User.Balance <= 0 {
+		status.Reason = "balance_insufficient"
+		return status
+	}
+
+	status.Available = true
+	status.Reason = "available"
+	return status
 }
 
 // NewAPIKeyService 创建API Key服务实例
@@ -313,15 +450,17 @@ func (s *APIKeyService) incrementAPIKeyErrorCount(ctx context.Context, userID in
 }
 
 // canUserBindGroup 检查用户是否可以绑定指定分组
+// 对于 quota_share 分组：禁止用户自助绑定，只能由管理员操作
 // 对于订阅类型分组：检查用户是否有有效订阅
 // 对于标准类型分组：使用原有的 AllowedGroups 和 IsExclusive 逻辑
 func (s *APIKeyService) canUserBindGroup(ctx context.Context, user *User, group *Group) bool {
-	// 订阅类型分组：需要有效订阅
+	if group.IsQuotaShareType() {
+		return false
+	}
 	if group.IsSubscriptionType() {
 		_, err := s.userSubRepo.GetActiveByUserIDAndGroupID(ctx, user.ID, group.ID)
-		return err == nil // 有有效订阅则允许
+		return err == nil
 	}
-	// 标准类型分组：使用原有逻辑
 	return user.CanBindGroup(group.ID, group.IsExclusive)
 }
 
@@ -396,6 +535,11 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 	}
 
 	// 创建API Key记录
+	quotaWeight := 1
+	if req.QuotaWeight != nil && *req.QuotaWeight > 0 {
+		quotaWeight = *req.QuotaWeight
+	}
+
 	apiKey := &APIKey{
 		UserID:      userID,
 		Key:         key,
@@ -409,6 +553,7 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		RateLimit5h: req.RateLimit5h,
 		RateLimit1d: req.RateLimit1d,
 		RateLimit7d: req.RateLimit7d,
+		QuotaWeight: quotaWeight,
 	}
 
 	// Set expiration time if specified
@@ -423,6 +568,9 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 
 	s.InvalidateAuthCacheByKey(ctx, apiKey.Key)
 	s.compileAPIKeyIPRules(apiKey)
+	if apiKey.GroupID != nil && s.quotaShareService != nil {
+		s.quotaShareService.InvalidateTotalWeight(ctx, *apiKey.GroupID)
+	}
 
 	return apiKey, nil
 }
@@ -522,6 +670,8 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 		return nil, ErrInsufficientPerms
 	}
 
+	oldGroupID := apiKey.GroupID // remember for weight cache invalidation
+
 	// 验证 IP 白名单格式
 	if len(req.IPWhitelist) > 0 {
 		if invalid := ip.ValidateIPPatterns(req.IPWhitelist); len(invalid) > 0 {
@@ -558,6 +708,9 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 		}
 
 		apiKey.GroupID = req.GroupID
+		if !group.IsQuotaShareType() {
+			apiKey.QuotaShareOverflowGroupID = nil
+		}
 	}
 
 	if req.Status != nil {
@@ -611,6 +764,10 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 	if req.RateLimit7d != nil {
 		apiKey.RateLimit7d = *req.RateLimit7d
 	}
+	if req.QuotaWeight != nil && *req.QuotaWeight > 0 {
+		apiKey.QuotaWeight = *req.QuotaWeight
+	}
+
 	resetRateLimit := req.ResetRateLimitUsage != nil && *req.ResetRateLimitUsage
 	if resetRateLimit {
 		apiKey.Usage5h = 0
@@ -633,18 +790,30 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 		_ = s.rateLimitCacheInvalid.InvalidateAPIKeyRateLimit(ctx, apiKey.ID)
 	}
 
+	if s.quotaShareService != nil {
+		groupChanged := req.GroupID != nil && (oldGroupID == nil || *oldGroupID != *req.GroupID)
+		if req.QuotaWeight != nil || groupChanged {
+			if oldGroupID != nil && *oldGroupID > 0 {
+				s.quotaShareService.InvalidateTotalWeight(ctx, *oldGroupID)
+			}
+			if apiKey.GroupID != nil && *apiKey.GroupID > 0 && (oldGroupID == nil || *apiKey.GroupID != *oldGroupID) {
+				s.quotaShareService.InvalidateTotalWeight(ctx, *apiKey.GroupID)
+			}
+		}
+	}
+
 	return apiKey, nil
 }
 
 // Delete 删除API Key
 func (s *APIKeyService) Delete(ctx context.Context, id int64, userID int64) error {
-	key, ownerID, err := s.apiKeyRepo.GetKeyAndOwnerID(ctx, id)
+	apiKey, err := s.apiKeyRepo.GetByID(ctx, id)
 	if err != nil {
 		return fmt.Errorf("get api key: %w", err)
 	}
 
 	// 验证当前用户是否为该 API Key 的所有者
-	if ownerID != userID {
+	if apiKey.UserID != userID {
 		return ErrInsufficientPerms
 	}
 
@@ -652,12 +821,16 @@ func (s *APIKeyService) Delete(ctx context.Context, id int64, userID int64) erro
 	if s.cache != nil {
 		_ = s.cache.DeleteCreateAttemptCount(ctx, userID)
 	}
-	s.InvalidateAuthCacheByKey(ctx, key)
+	s.InvalidateAuthCacheByKey(ctx, apiKey.Key)
 
 	if err := s.apiKeyRepo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("delete api key: %w", err)
 	}
 	s.lastUsedTouchL1.Delete(id)
+
+	if apiKey.GroupID != nil && *apiKey.GroupID > 0 && s.quotaShareService != nil {
+		s.quotaShareService.InvalidateTotalWeight(ctx, *apiKey.GroupID)
+	}
 
 	return nil
 }
@@ -777,11 +950,12 @@ func (s *APIKeyService) GetAvailableGroups(ctx context.Context, userID int64) ([
 
 // canUserBindGroupInternal 内部方法，检查用户是否可以绑定分组（使用预加载的订阅数据）
 func (s *APIKeyService) canUserBindGroupInternal(user *User, group *Group, subscribedGroupIDs map[int64]bool) bool {
-	// 订阅类型分组：需要有效订阅
+	if group.IsQuotaShareType() {
+		return false
+	}
 	if group.IsSubscriptionType() {
 		return subscribedGroupIDs[group.ID]
 	}
-	// 标准类型分组：使用原有逻辑
 	return user.CanBindGroup(group.ID, group.IsExclusive)
 }
 
