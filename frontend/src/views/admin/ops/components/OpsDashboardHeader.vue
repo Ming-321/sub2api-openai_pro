@@ -426,9 +426,7 @@ const ttftMaxMs = computed(() => overview.value?.ttft?.max_ms ?? null)
 const isSystemIdle = computed(() => {
   const ov = overview.value
   if (!ov) return true
-  const qps = ov.qps?.current
-  const errorRate = ov.error_rate ?? 0
-  return (qps ?? 0) === 0 && errorRate === 0
+  return (ov.request_count_total ?? 0) === 0 && (ov.error_count_total ?? 0) === 0
 })
 
 const healthScoreValue = computed<number | null>(() => {
