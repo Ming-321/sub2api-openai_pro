@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -82,6 +82,8 @@ type QuotaShareCache interface {
 	IncrLocalUSD(ctx context.Context, groupID int64, window string, cost float64) error
 	// GetAndResetLocalUSD reads and resets the local USD counter for a specific window.
 	GetAndResetLocalUSD(ctx context.Context, groupID int64, window string) (float64, error)
+	// ResetLocalUSD clears the local USD counter for a specific window without reading it.
+	ResetLocalUSD(ctx context.Context, groupID int64, window string) error
 }
 
 // QuotaShareGroupState holds the global window state stored in Redis.
@@ -120,6 +122,7 @@ type QuotaShareKeyRepository interface {
 // QuotaShareUsageRepository provides DB-backed actual_cost aggregation.
 type QuotaShareUsageRepository interface {
 	SumAPIKeyActualCostInWindow(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) (float64, error)
+	GetAccountQuotaShareStatsInWindow(ctx context.Context, accountID int64, startTime, endTime time.Time) (*usagestats.AccountStats, error)
 }
 
 type QuotaShareService struct {
@@ -388,22 +391,6 @@ func (s *QuotaShareService) TryCalibrate(ctx context.Context, group *Group, snap
 		calState = &domain.QuotaShareCalibrationState{}
 	}
 
-	// Initialize window calibration state from current upstream data if needed
-	if calState.Window5h == nil && normalized.Used5hPercent != nil {
-		calState.Window5h = &domain.QuotaShareCalibrationWindowState{
-			CurrentEstimateUSD: group.Estimated5hLimitUSD,
-			LastUpstreamPct:    *normalized.Used5hPercent,
-			EMAAlpha:           calibrationDefaultAlpha,
-		}
-	}
-	if calState.Window7d == nil && normalized.Used7dPercent != nil {
-		calState.Window7d = &domain.QuotaShareCalibrationWindowState{
-			CurrentEstimateUSD: group.Estimated7dLimitUSD,
-			LastUpstreamPct:    *normalized.Used7dPercent,
-			EMAAlpha:           calibrationDefaultAlpha,
-		}
-	}
-
 	// Singleflight: only one calibration per group at a time (Trap 13)
 	sfKey := fmt.Sprintf("calibrate:%d", group.ID)
 	_, _, _ = s.sfCal.Do(sfKey, func() (interface{}, error) {
@@ -417,20 +404,23 @@ const (
 	calibrationMinDeltaPct  = 3.0
 	calibrationDefaultAlpha = 0.3
 	calibrationMaxDeviation = 3.0 // skip if E_new / E_old > this
+	calibrationPctRollback  = 0.5
 )
 
 func (s *QuotaShareService) doCalibrate(ctx context.Context, group *Group, norm *NormalizedCodexLimits, calState *domain.QuotaShareCalibrationState) {
 	now := time.Now()
 	updated := false
 
-	if norm.Used5hPercent != nil && calState.Window5h != nil {
-		if s.prepareCalibrationSuggestion(ctx, group.ID, "5h", calState.Window5h, *norm.Used5hPercent, group.Estimated5hLimitUSD, now) {
+	if norm.Used5hPercent != nil {
+		start, end := calibrationWindowBounds(calState.Window5h, norm.Reset5hSeconds, norm.Window5hMinutes, now)
+		if s.prepareCalibrationSuggestion(ctx, group.ID, "5h", &calState.Window5h, *norm.Used5hPercent, group.Estimated5hLimitUSD, start, end, now) {
 			updated = true
 		}
 	}
 
-	if norm.Used7dPercent != nil && calState.Window7d != nil {
-		if s.prepareCalibrationSuggestion(ctx, group.ID, "7d", calState.Window7d, *norm.Used7dPercent, group.Estimated7dLimitUSD, now) {
+	if norm.Used7dPercent != nil {
+		start, end := calibrationWindowBounds(calState.Window7d, norm.Reset7dSeconds, norm.Window7dMinutes, now)
+		if s.prepareCalibrationSuggestion(ctx, group.ID, "7d", &calState.Window7d, *norm.Used7dPercent, group.Estimated7dLimitUSD, start, end, now) {
 			updated = true
 		}
 	}
@@ -446,18 +436,96 @@ func (s *QuotaShareService) shouldCalibrate(now time.Time, lastCal *time.Time, c
 	if lastCal != nil && now.Sub(*lastCal) < calibrationMinInterval {
 		return false
 	}
-	deltaPct := math.Abs(currentPct - lastPct)
+	deltaPct := currentPct - lastPct
 	return deltaPct >= calibrationMinDeltaPct
 }
 
-func (s *QuotaShareService) prepareCalibrationSuggestion(ctx context.Context, groupID int64, window string, w *domain.QuotaShareCalibrationWindowState, currentUpstreamPct, currentEstimate float64, now time.Time) bool {
+func calibrationWindowBounds(w *domain.QuotaShareCalibrationWindowState, resetAfterSeconds *int, windowMinutes *int, now time.Time) (start, end int64) {
+	if resetAfterSeconds == nil || *resetAfterSeconds <= 0 {
+		if w != nil {
+			return w.WindowStart, w.WindowEnd
+		}
+		return 0, 0
+	}
+	existingStart, existingEnd := int64(0), int64(0)
+	if w != nil {
+		existingStart = w.WindowStart
+		existingEnd = w.WindowEnd
+	}
+	newEnd := now.Add(time.Duration(*resetAfterSeconds) * time.Second).Unix()
+	if existingEnd > 0 && !quotaShareWindowEndChanged(existingEnd, newEnd) {
+		if existingStart > 0 {
+			return existingStart, existingEnd
+		}
+		if windowMinutes != nil && *windowMinutes > 0 {
+			windowDur := time.Duration(*windowMinutes) * time.Minute
+			return existingEnd - int64(windowDur/time.Second), existingEnd
+		}
+		return existingStart, existingEnd
+	}
+	if windowMinutes == nil || *windowMinutes <= 0 {
+		return existingStart, newEnd
+	}
+	windowDur := time.Duration(*windowMinutes) * time.Minute
+	return newEnd - int64(windowDur/time.Second), newEnd
+}
+
+func shouldResetCalibrationBaseline(w *domain.QuotaShareCalibrationWindowState, currentUpstreamPct float64, windowStart, windowEnd int64) bool {
 	if w == nil {
+		return true
+	}
+	if w.WindowEnd > 0 && windowEnd > 0 && quotaShareWindowEndChanged(w.WindowEnd, windowEnd) {
+		return true
+	}
+	if w.WindowEnd == 0 && windowEnd > 0 {
+		return true
+	}
+	return currentUpstreamPct+calibrationPctRollback < w.LastUpstreamPct
+}
+
+func (s *QuotaShareService) resetCalibrationBaseline(ctx context.Context, groupID int64, window string, target **domain.QuotaShareCalibrationWindowState, currentUpstreamPct, currentEstimate float64, windowStart, windowEnd int64, now time.Time) {
+	count := 0
+	if target != nil && *target != nil {
+		count = (*target).CalibrationCount
+	}
+	*target = &domain.QuotaShareCalibrationWindowState{
+		CurrentEstimateUSD: currentEstimate,
+		LastUpstreamPct:    currentUpstreamPct,
+		WindowStart:        windowStart,
+		WindowEnd:          windowEnd,
+		SampleStartedAt:    &now,
+		EMAAlpha:           calibrationDefaultAlpha,
+		CalibrationCount:   count,
+	}
+	if s.cache != nil {
+		if err := s.cache.ResetLocalUSD(ctx, groupID, window); err != nil {
+			slog.Warn("quota_share: failed to reset local USD while creating calibration baseline", "group_id", groupID, "window", window, "error", err)
+		}
+	}
+}
+
+func (s *QuotaShareService) prepareCalibrationSuggestion(ctx context.Context, groupID int64, window string, target **domain.QuotaShareCalibrationWindowState, currentUpstreamPct, currentEstimate float64, windowStart, windowEnd int64, now time.Time) bool {
+	if target == nil {
 		return false
 	}
+	if shouldResetCalibrationBaseline(*target, currentUpstreamPct, windowStart, windowEnd) {
+		s.resetCalibrationBaseline(ctx, groupID, window, target, currentUpstreamPct, currentEstimate, windowStart, windowEnd, now)
+		return true
+	}
+
+	w := *target
 	if w.EMAAlpha <= 0 || w.EMAAlpha > 1 {
 		w.EMAAlpha = calibrationDefaultAlpha
 	}
-	if !s.shouldCalibrate(now, w.LastCalibrationAt, currentUpstreamPct, w.LastUpstreamPct) {
+	w.CurrentEstimateUSD = currentEstimate
+	w.WindowStart = windowStart
+	w.WindowEnd = windowEnd
+
+	lastCal := w.LastCalibrationAt
+	if lastCal == nil {
+		lastCal = w.SampleStartedAt
+	}
+	if !s.shouldCalibrate(now, lastCal, currentUpstreamPct, w.LastUpstreamPct) {
 		return false
 	}
 
@@ -470,15 +538,6 @@ func (s *QuotaShareService) prepareCalibrationSuggestion(ctx context.Context, gr
 		UpstreamPctDelta:   deltaPct,
 		EMAAlpha:           w.EMAAlpha,
 		CalculatedAt:       &now,
-	}
-
-	if deltaPct < 0.5 {
-		suggestion.Status = domain.QuotaShareCalibrationSuggestionStatusInsufficientData
-		suggestion.Reason = "上游用量百分比增量不足，暂不能可靠估算"
-		w.PendingSuggestion = suggestion
-		w.LastCalibrationAt = &now
-		w.LastUpstreamPct = currentUpstreamPct
-		return true
 	}
 
 	localUSD, err := s.cache.GetAndResetLocalUSD(ctx, groupID, window)
@@ -523,7 +582,7 @@ func (s *QuotaShareService) prepareCalibrationSuggestion(ctx context.Context, gr
 
 func (s *QuotaShareService) computeCalibration(w *domain.QuotaShareCalibrationWindowState, currentUpstreamPct, currentEstimate, localUSD float64) (float64, string) {
 	deltaPct := currentUpstreamPct - w.LastUpstreamPct
-	if deltaPct < 0.5 {
+	if deltaPct < calibrationMinDeltaPct {
 		return 0, "upstream delta too small"
 	}
 
@@ -647,6 +706,21 @@ func (s *QuotaShareService) GetKeyUsage(ctx context.Context, apiKey *APIKey, gro
 		return nil, err
 	}
 	return usage, nil
+}
+
+func (s *QuotaShareService) GetAccountStatsInWindow(ctx context.Context, accountID int64, windowStart, windowEnd int64) (*usagestats.AccountStats, error) {
+	empty := &usagestats.AccountStats{}
+	if s == nil || s.usageRepo == nil || accountID <= 0 || windowStart <= 0 || windowEnd <= 0 || windowEnd <= windowStart {
+		return empty, nil
+	}
+	stats, err := s.usageRepo.GetAccountQuotaShareStatsInWindow(ctx, accountID, time.Unix(windowStart, 0), time.Unix(windowEnd, 0))
+	if err != nil {
+		return nil, err
+	}
+	if stats == nil {
+		return empty, nil
+	}
+	return stats, nil
 }
 
 // GetGroupState returns the cached global window state for a quota_share group.

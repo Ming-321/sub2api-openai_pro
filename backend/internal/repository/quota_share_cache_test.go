@@ -1,6 +1,12 @@
 package repository
 
-import "testing"
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/redis/go-redis/v9"
+)
 
 func TestShouldResetQuotaShareWindowEnd(t *testing.T) {
 	tests := []struct {
@@ -25,4 +31,67 @@ func TestShouldResetQuotaShareWindowEnd(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestQuotaShareCacheResetLocalUSDDeletesOnlyTargetWindowKey(t *testing.T) {
+	rdb := &quotaShareRedisFake{}
+	cache := &quotaShareCache{rdb: rdb}
+
+	if err := cache.ResetLocalUSD(context.Background(), 11, "5h"); err != nil {
+		t.Fatalf("ResetLocalUSD returned error: %v", err)
+	}
+
+	want := "qs:lusd:11:5h"
+	if len(rdb.deletedKeys) != 1 || rdb.deletedKeys[0] != want {
+		t.Fatalf("deleted keys = %v, want [%s]", rdb.deletedKeys, want)
+	}
+}
+
+type quotaShareRedisFake struct {
+	deletedKeys []string
+}
+
+func (f *quotaShareRedisFake) Del(ctx context.Context, keys ...string) *redis.IntCmd {
+	f.deletedKeys = append(f.deletedKeys, keys...)
+	return redis.NewIntResult(int64(len(keys)), nil)
+}
+
+func (f *quotaShareRedisFake) Pipeline() redis.Pipeliner {
+	panic("not implemented")
+}
+
+func (f *quotaShareRedisFake) Get(ctx context.Context, key string) *redis.StringCmd {
+	panic("not implemented")
+}
+
+func (f *quotaShareRedisFake) Set(ctx context.Context, key string, value interface{}, expiration time.Duration) *redis.StatusCmd {
+	panic("not implemented")
+}
+
+func (f *quotaShareRedisFake) HGetAll(ctx context.Context, key string) *redis.MapStringStringCmd {
+	panic("not implemented")
+}
+
+func (f *quotaShareRedisFake) Eval(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd {
+	panic("not implemented")
+}
+
+func (f *quotaShareRedisFake) EvalSha(ctx context.Context, sha1 string, keys []string, args ...interface{}) *redis.Cmd {
+	panic("not implemented")
+}
+
+func (f *quotaShareRedisFake) EvalRO(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd {
+	panic("not implemented")
+}
+
+func (f *quotaShareRedisFake) EvalShaRO(ctx context.Context, sha1 string, keys []string, args ...interface{}) *redis.Cmd {
+	panic("not implemented")
+}
+
+func (f *quotaShareRedisFake) ScriptExists(ctx context.Context, hashes ...string) *redis.BoolSliceCmd {
+	panic("not implemented")
+}
+
+func (f *quotaShareRedisFake) ScriptLoad(ctx context.Context, script string) *redis.StringCmd {
+	panic("not implemented")
 }

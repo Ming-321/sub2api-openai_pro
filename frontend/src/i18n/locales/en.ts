@@ -382,6 +382,7 @@ export default {
     profile: 'Profile',
     users: 'Users',
     groups: 'Groups',
+    quotaShare: 'Quota Share',
     channels: 'Channels',
     availableChannels: 'Available Channels',
     subscriptions: 'Subscriptions',

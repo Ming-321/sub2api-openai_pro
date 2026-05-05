@@ -606,11 +606,32 @@ type QuotaShareKeyStatus struct {
 	Limit7d     float64 `json:"limit_7d"`
 }
 
+type QuotaShareUpstreamAccountWindowStatus struct {
+	Requests     int64   `json:"requests"`
+	Tokens       int64   `json:"tokens"`
+	Cost         float64 `json:"cost"`
+	StandardCost float64 `json:"standard_cost"`
+	UserCost     float64 `json:"user_cost"`
+	WindowStart  int64   `json:"window_start"`
+	WindowEnd    int64   `json:"window_end"`
+	UpstreamPct  float64 `json:"upstream_pct"`
+}
+
+type QuotaShareUpstreamAccountStatus struct {
+	AccountID   int64                                 `json:"account_id"`
+	AccountName string                                `json:"account_name"`
+	Platform    string                                `json:"platform"`
+	Status      string                                `json:"status"`
+	Window5h    QuotaShareUpstreamAccountWindowStatus `json:"window_5h"`
+	Window7d    QuotaShareUpstreamAccountWindowStatus `json:"window_7d"`
+}
+
 // QuotaShareStatusResponse holds the real-time quota_share state, combining Redis window metadata and DB usage.
 type QuotaShareStatusResponse struct {
-	GroupState  *QuotaShareGroupState `json:"group_state"`
-	TotalWeight int                   `json:"total_weight"`
-	Keys        []QuotaShareKeyStatus `json:"keys"`
+	GroupState       *QuotaShareGroupState             `json:"group_state"`
+	TotalWeight      int                               `json:"total_weight"`
+	Keys             []QuotaShareKeyStatus             `json:"keys"`
+	UpstreamAccounts []QuotaShareUpstreamAccountStatus `json:"upstream_accounts"`
 }
 
 func (s *adminServiceImpl) GetQuotaShareStatus(ctx context.Context, groupID int64) (*QuotaShareStatusResponse, error) {
@@ -631,6 +652,10 @@ func (s *adminServiceImpl) GetQuotaShareStatus(ctx context.Context, groupID int6
 	keys, _, err := s.apiKeyRepo.ListByGroupID(ctx, groupID, pagination.PaginationParams{Page: 1, PageSize: 200})
 	if err != nil {
 		return nil, fmt.Errorf("list group keys: %w", err)
+	}
+	accounts, _, err := s.accountRepo.ListWithFilters(ctx, pagination.PaginationParams{Page: 1, PageSize: 200}, "", "", "", "", groupID, "")
+	if err != nil {
+		return nil, fmt.Errorf("list group accounts: %w", err)
 	}
 
 	totalWeight := 0
@@ -669,10 +694,57 @@ func (s *adminServiceImpl) GetQuotaShareStatus(ctx context.Context, groupID int6
 	}
 
 	return &QuotaShareStatusResponse{
-		GroupState:  state,
-		TotalWeight: totalWeight,
-		Keys:        keyStatuses,
+		GroupState:       state,
+		TotalWeight:      totalWeight,
+		Keys:             keyStatuses,
+		UpstreamAccounts: s.buildQuotaShareUpstreamAccounts(ctx, accounts, state),
 	}, nil
+}
+
+func (s *adminServiceImpl) buildQuotaShareUpstreamAccounts(ctx context.Context, accounts []Account, state *QuotaShareGroupState) []QuotaShareUpstreamAccountStatus {
+	if len(accounts) == 0 {
+		return []QuotaShareUpstreamAccountStatus{}
+	}
+	items := make([]QuotaShareUpstreamAccountStatus, 0, len(accounts))
+	for _, account := range accounts {
+		item := QuotaShareUpstreamAccountStatus{
+			AccountID:   account.ID,
+			AccountName: account.Name,
+			Platform:    account.Platform,
+			Status:      account.Status,
+		}
+		if state != nil && s.quotaShareService != nil {
+			item.Window5h = s.buildQuotaShareUpstreamAccountWindow(ctx, account.ID, state.Window5hStart, state.Window5hEnd, state.Upstream5hPct)
+			item.Window7d = s.buildQuotaShareUpstreamAccountWindow(ctx, account.ID, state.Window7dStart, state.Window7dEnd, state.Upstream7dPct)
+		}
+		items = append(items, item)
+	}
+	return items
+}
+
+func (s *adminServiceImpl) buildQuotaShareUpstreamAccountWindow(ctx context.Context, accountID, start, end int64, upstreamPct float64) QuotaShareUpstreamAccountWindowStatus {
+	window := QuotaShareUpstreamAccountWindowStatus{
+		WindowStart: start,
+		WindowEnd:   end,
+		UpstreamPct: upstreamPct,
+	}
+	if s.quotaShareService == nil || start <= 0 || end <= 0 || end <= start {
+		return window
+	}
+	stats, err := s.quotaShareService.GetAccountStatsInWindow(ctx, accountID, start, end)
+	if err != nil {
+		slog.Warn("quota_share: failed to load upstream account window stats", "account_id", accountID, "start", start, "end", end, "error", err)
+		return window
+	}
+	if stats == nil {
+		return window
+	}
+	window.Requests = stats.Requests
+	window.Tokens = stats.Tokens
+	window.Cost = stats.Cost
+	window.StandardCost = stats.StandardCost
+	window.UserCost = stats.UserCost
+	return window
 }
 
 func (s *adminServiceImpl) GetQuotaShareCalibrationStatus(ctx context.Context, groupID int64) (*QuotaShareCalibrationStatusResponse, error) {

@@ -7,15 +7,17 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/stretchr/testify/require"
 )
 
 type quotaShareCacheStub struct {
-	state       *QuotaShareGroupState
-	saved       *QuotaShareGroupState
-	keyUsage    *QuotaShareKeyUsage
-	totalWeight int
-	localUSD    map[string]float64
+	state         *QuotaShareGroupState
+	saved         *QuotaShareGroupState
+	keyUsage      *QuotaShareKeyUsage
+	totalWeight   int
+	localUSD      map[string]float64
+	resetLocalUSD []string
 }
 
 func (c *quotaShareCacheStub) GetGroupState(ctx context.Context, groupID int64) (*QuotaShareGroupState, error) {
@@ -73,6 +75,14 @@ func (c *quotaShareCacheStub) GetAndResetLocalUSD(ctx context.Context, groupID i
 	value := c.localUSD[window]
 	c.localUSD[window] = 0
 	return value, nil
+}
+
+func (c *quotaShareCacheStub) ResetLocalUSD(ctx context.Context, groupID int64, window string) error {
+	c.resetLocalUSD = append(c.resetLocalUSD, window)
+	if c.localUSD != nil {
+		c.localUSD[window] = 0
+	}
+	return nil
 }
 
 type quotaShareGroupRepoStub struct {
@@ -134,6 +144,10 @@ func (r *quotaShareUsageRepoStub) SumAPIKeyActualCostInWindow(ctx context.Contex
 	default:
 		return 0.5, nil
 	}
+}
+
+func (r *quotaShareUsageRepoStub) GetAccountQuotaShareStatsInWindow(ctx context.Context, accountID int64, startTime, endTime time.Time) (*usagestats.AccountStats, error) {
+	return &usagestats.AccountStats{}, r.err
 }
 
 func TestQuotaShareServiceGetKeyUsageUsesDBWindowTotals(t *testing.T) {
@@ -329,6 +343,7 @@ func TestQuotaShareServiceUpdateGlobalWindowKeepsSmallDriftWindow(t *testing.T) 
 }
 
 func TestQuotaShareServiceTryCalibrateCreatesPendingSuggestion(t *testing.T) {
+	sampleStartedAt := time.Now().Add(-time.Hour)
 	cache := &quotaShareCacheStub{
 		localUSD: map[string]float64{"5h": 2},
 	}
@@ -350,17 +365,14 @@ func TestQuotaShareServiceTryCalibrateCreatesPendingSuggestion(t *testing.T) {
 			Window5h: &domain.QuotaShareCalibrationWindowState{
 				CurrentEstimateUSD: 10,
 				LastUpstreamPct:    10,
+				SampleStartedAt:    &sampleStartedAt,
 				EMAAlpha:           0.3,
 			},
 		},
 	}
 	primaryPct := 20.0
-	resetAfter := 3600
-	windowMins := 300
 	snapshot := &OpenAICodexUsageSnapshot{
-		PrimaryUsedPercent:       &primaryPct,
-		PrimaryResetAfterSeconds: &resetAfter,
-		PrimaryWindowMinutes:     &windowMins,
+		SecondaryUsedPercent: &primaryPct,
 	}
 
 	svc.TryCalibrate(context.Background(), group, snapshot)
@@ -371,6 +383,170 @@ func TestQuotaShareServiceTryCalibrateCreatesPendingSuggestion(t *testing.T) {
 	require.Equal(t, domain.QuotaShareCalibrationSuggestionStatusPending, groupRepo.savedCalState.Window5h.PendingSuggestion.Status)
 	require.InDelta(t, 13.0, groupRepo.savedCalState.Window5h.PendingSuggestion.SuggestedEstimateUSD, 1e-9)
 	require.InDelta(t, 10.0, group.Estimated5hLimitUSD, 1e-9)
+	require.Equal(t, 1, groupRepo.updateStateOnly)
+}
+
+func TestQuotaShareServiceTryCalibrateInitializesBaselineWithoutSuggestion(t *testing.T) {
+	cache := &quotaShareCacheStub{
+		localUSD: map[string]float64{"5h": 9, "7d": 12},
+	}
+	groupRepo := &quotaShareGroupRepoStub{}
+	svc := NewQuotaShareService(cache, groupRepo, nil, nil)
+	group := &Group{
+		ID:                  11,
+		Name:                "quota-share",
+		SubscriptionType:    SubscriptionTypeQuotaShare,
+		Estimated5hLimitUSD: 10,
+		Estimated7dLimitUSD: 70,
+	}
+	pct5h := 8.0
+	pct7d := 21.0
+	reset5h := 3600
+	reset7d := 86400
+	window5h := 300
+	window7d := 10080
+	snapshot := &OpenAICodexUsageSnapshot{
+		PrimaryUsedPercent:         &pct5h,
+		PrimaryResetAfterSeconds:   &reset5h,
+		PrimaryWindowMinutes:       &window5h,
+		SecondaryUsedPercent:       &pct7d,
+		SecondaryResetAfterSeconds: &reset7d,
+		SecondaryWindowMinutes:     &window7d,
+	}
+
+	svc.TryCalibrate(context.Background(), group, snapshot)
+
+	require.NotNil(t, groupRepo.savedCalState)
+	require.NotNil(t, groupRepo.savedCalState.Window5h)
+	require.NotNil(t, groupRepo.savedCalState.Window7d)
+	require.Nil(t, groupRepo.savedCalState.Window5h.PendingSuggestion)
+	require.Nil(t, groupRepo.savedCalState.Window7d.PendingSuggestion)
+	require.NotNil(t, groupRepo.savedCalState.Window5h.SampleStartedAt)
+	require.NotNil(t, groupRepo.savedCalState.Window7d.SampleStartedAt)
+	require.InDelta(t, pct5h, groupRepo.savedCalState.Window5h.LastUpstreamPct, 1e-9)
+	require.InDelta(t, pct7d, groupRepo.savedCalState.Window7d.LastUpstreamPct, 1e-9)
+	require.Equal(t, []string{"5h", "7d"}, cache.resetLocalUSD)
+	require.Zero(t, cache.localUSD["5h"])
+	require.Zero(t, cache.localUSD["7d"])
+	require.Equal(t, 1, groupRepo.updateStateOnly)
+}
+
+func TestQuotaShareServiceTryCalibrateSkipsSmallPositiveDelta(t *testing.T) {
+	sampleStartedAt := time.Now().Add(-time.Hour)
+	cache := &quotaShareCacheStub{localUSD: map[string]float64{"5h": 2}}
+	groupRepo := &quotaShareGroupRepoStub{}
+	svc := NewQuotaShareService(cache, groupRepo, nil, nil)
+	group := &Group{
+		ID:                  11,
+		Name:                "quota-share",
+		SubscriptionType:    SubscriptionTypeQuotaShare,
+		Estimated5hLimitUSD: 10,
+		CalibrationState: &domain.QuotaShareCalibrationState{
+			Window5h: &domain.QuotaShareCalibrationWindowState{
+				CurrentEstimateUSD: 10,
+				LastUpstreamPct:    10,
+				SampleStartedAt:    &sampleStartedAt,
+				EMAAlpha:           0.3,
+			},
+		},
+	}
+	pct := 12.9
+	snapshot := &OpenAICodexUsageSnapshot{SecondaryUsedPercent: &pct}
+
+	svc.TryCalibrate(context.Background(), group, snapshot)
+
+	require.Nil(t, groupRepo.savedCalState)
+	require.InDelta(t, 2.0, cache.localUSD["5h"], 1e-9)
+}
+
+func TestQuotaShareServiceTryCalibrateResetsBaselineOnWindowChangeAndRollback(t *testing.T) {
+	sampleStartedAt := time.Now().Add(-time.Hour)
+	now := time.Now()
+	cache := &quotaShareCacheStub{localUSD: map[string]float64{"5h": 2, "7d": 3}}
+	groupRepo := &quotaShareGroupRepoStub{}
+	svc := NewQuotaShareService(cache, groupRepo, nil, nil)
+	group := &Group{
+		ID:                  11,
+		Name:                "quota-share",
+		SubscriptionType:    SubscriptionTypeQuotaShare,
+		Estimated5hLimitUSD: 10,
+		Estimated7dLimitUSD: 70,
+		CalibrationState: &domain.QuotaShareCalibrationState{
+			Window5h: &domain.QuotaShareCalibrationWindowState{
+				CurrentEstimateUSD: 10,
+				LastUpstreamPct:    40,
+				WindowStart:        now.Add(-5 * time.Hour).Unix(),
+				WindowEnd:          now.Add(time.Hour).Unix(),
+				SampleStartedAt:    &sampleStartedAt,
+				PendingSuggestion: &domain.QuotaShareCalibrationSuggestion{
+					Window: "5h",
+					Status: domain.QuotaShareCalibrationSuggestionStatusPending,
+				},
+				EMAAlpha: 0.3,
+			},
+			Window7d: &domain.QuotaShareCalibrationWindowState{
+				CurrentEstimateUSD: 70,
+				LastUpstreamPct:    80,
+				SampleStartedAt:    &sampleStartedAt,
+				PendingSuggestion: &domain.QuotaShareCalibrationSuggestion{
+					Window: "7d",
+					Status: domain.QuotaShareCalibrationSuggestionStatusPending,
+				},
+				EMAAlpha: 0.3,
+			},
+		},
+	}
+	pct5h := 45.0
+	pct7d := 20.0
+	reset5h := 3 * 3600
+	window5h := 300
+	snapshot := &OpenAICodexUsageSnapshot{
+		SecondaryUsedPercent:       &pct5h,
+		SecondaryResetAfterSeconds: &reset5h,
+		SecondaryWindowMinutes:     &window5h,
+		PrimaryUsedPercent:         &pct7d,
+	}
+
+	svc.TryCalibrate(context.Background(), group, snapshot)
+
+	require.NotNil(t, groupRepo.savedCalState)
+	require.Nil(t, groupRepo.savedCalState.Window5h.PendingSuggestion)
+	require.Nil(t, groupRepo.savedCalState.Window7d.PendingSuggestion)
+	require.InDelta(t, pct5h, groupRepo.savedCalState.Window5h.LastUpstreamPct, 1e-9)
+	require.InDelta(t, pct7d, groupRepo.savedCalState.Window7d.LastUpstreamPct, 1e-9)
+	require.ElementsMatch(t, []string{"5h", "7d"}, cache.resetLocalUSD)
+}
+
+func TestQuotaShareServiceTryCalibrateRejectsLargeDeviation(t *testing.T) {
+	sampleStartedAt := time.Now().Add(-time.Hour)
+	cache := &quotaShareCacheStub{
+		localUSD: map[string]float64{"5h": 100},
+	}
+	groupRepo := &quotaShareGroupRepoStub{}
+	svc := NewQuotaShareService(cache, groupRepo, nil, nil)
+	group := &Group{
+		ID:                  11,
+		Name:                "quota-share",
+		SubscriptionType:    SubscriptionTypeQuotaShare,
+		Estimated5hLimitUSD: 10,
+		CalibrationState: &domain.QuotaShareCalibrationState{
+			Window5h: &domain.QuotaShareCalibrationWindowState{
+				CurrentEstimateUSD: 10,
+				LastUpstreamPct:    10,
+				SampleStartedAt:    &sampleStartedAt,
+				EMAAlpha:           0.3,
+			},
+		},
+	}
+	pct := 20.0
+	snapshot := &OpenAICodexUsageSnapshot{SecondaryUsedPercent: &pct}
+
+	svc.TryCalibrate(context.Background(), group, snapshot)
+
+	require.NotNil(t, groupRepo.savedCalState)
+	require.NotNil(t, groupRepo.savedCalState.Window5h.PendingSuggestion)
+	require.Equal(t, domain.QuotaShareCalibrationSuggestionStatusRejected, groupRepo.savedCalState.Window5h.PendingSuggestion.Status)
+	require.Equal(t, 0, groupRepo.updateCalls)
 	require.Equal(t, 1, groupRepo.updateStateOnly)
 }
 

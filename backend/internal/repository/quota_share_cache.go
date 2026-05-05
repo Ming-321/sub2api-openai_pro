@@ -22,7 +22,16 @@ const (
 )
 
 type quotaShareCache struct {
-	rdb redis.Cmdable
+	rdb quotaShareRedisClient
+}
+
+type quotaShareRedisClient interface {
+	redis.Scripter
+	Pipeline() redis.Pipeliner
+	Get(ctx context.Context, key string) *redis.StringCmd
+	Set(ctx context.Context, key string, value interface{}, expiration time.Duration) *redis.StatusCmd
+	HGetAll(ctx context.Context, key string) *redis.MapStringStringCmd
+	Del(ctx context.Context, keys ...string) *redis.IntCmd
 }
 
 func NewQuotaShareCache(rdb redis.Cmdable) service.QuotaShareCache {
@@ -220,6 +229,10 @@ func (c *quotaShareCache) GetAndResetLocalUSD(ctx context.Context, groupID int64
 		return 0, err
 	}
 	return strconv.ParseFloat(result, 64)
+}
+
+func (c *quotaShareCache) ResetLocalUSD(ctx context.Context, groupID int64, window string) error {
+	return c.rdb.Del(ctx, localUSDKey(groupID, window)).Err()
 }
 
 func (c *quotaShareCache) GetTotalWeight(ctx context.Context, groupID int64) (int, error) {

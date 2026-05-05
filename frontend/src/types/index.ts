@@ -477,6 +477,9 @@ export interface QuotaShareCalibrationWindowState {
   current_estimate_usd?: number
   last_upstream_pct?: number
   last_local_usd?: number
+  window_start?: number
+  window_end?: number
+  sample_started_at?: string | null
   ema_alpha?: number
   last_calibration_at?: string | null
   pending_suggestion?: QuotaShareCalibrationSuggestion | null
@@ -707,10 +710,31 @@ export interface QuotaShareKeyStatus {
   usage_7d: number
 }
 
+export interface QuotaShareUpstreamAccountWindowStatus {
+  requests: number
+  tokens: number
+  cost: number
+  standard_cost: number
+  user_cost: number
+  window_start: number
+  window_end: number
+  upstream_pct: number
+}
+
+export interface QuotaShareUpstreamAccountStatus {
+  account_id: number
+  account_name: string
+  platform: string
+  status: string
+  window_5h: QuotaShareUpstreamAccountWindowStatus
+  window_7d: QuotaShareUpstreamAccountWindowStatus
+}
+
 export interface QuotaShareStatusResponse {
   group_state: QuotaShareGroupState | null
   total_weight: number
   keys: QuotaShareKeyStatus[]
+  upstream_accounts?: QuotaShareUpstreamAccountStatus[]
 }
 
 export interface QuotaShareCalibrationWindowView {

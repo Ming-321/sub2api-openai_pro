@@ -34,6 +34,9 @@ type QuotaShareCalibrationWindowState struct {
 	LastCalibrationAt  *time.Time                       `json:"last_calibration_at,omitempty"`
 	LastUpstreamPct    float64                          `json:"last_upstream_pct"`
 	LastLocalUSD       float64                          `json:"last_local_usd"`
+	WindowStart        int64                            `json:"window_start,omitempty"`
+	WindowEnd          int64                            `json:"window_end,omitempty"`
+	SampleStartedAt    *time.Time                       `json:"sample_started_at,omitempty"`
 	EMAAlpha           float64                          `json:"ema_alpha"`
 	CalibrationCount   int                              `json:"calibration_count"`
 	PendingSuggestion  *QuotaShareCalibrationSuggestion `json:"pending_suggestion,omitempty"`

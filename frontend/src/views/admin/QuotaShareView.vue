@@ -195,6 +195,69 @@
         <section class="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-900">
           <div class="flex items-center justify-between gap-3">
             <div>
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">上游账号当前窗口统计</h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
+                按当前 quota_share 全局窗口聚合绑定上游账号的本地 usage_logs 数据。
+              </p>
+            </div>
+            <div v-if="lastUpdatedLabel" class="text-xs text-gray-500 dark:text-dark-400">
+              更新于 {{ lastUpdatedLabel }}
+            </div>
+          </div>
+
+          <div class="mt-5 overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 dark:divide-dark-700">
+              <thead>
+                <tr class="text-left text-xs font-medium uppercase tracking-[0.18em] text-gray-500 dark:text-dark-400">
+                  <th class="px-3 py-3">上游账号</th>
+                  <th class="px-3 py-3">5h 本地统计</th>
+                  <th class="px-3 py-3">7d 本地统计</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100 dark:divide-dark-800">
+                <tr v-if="!status?.upstream_accounts?.length">
+                  <td colspan="3" class="px-3 py-8 text-center text-sm text-gray-500 dark:text-dark-400">
+                    当前分组还没有绑定上游账号，或窗口尚未初始化。
+                  </td>
+                </tr>
+                <tr v-for="account in status?.upstream_accounts || []" :key="account.account_id">
+                  <td class="px-3 py-4 align-top">
+                    <div class="font-medium text-gray-900 dark:text-white">{{ account.account_name || `#${account.account_id}` }}</div>
+                    <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+                      Account ID: {{ account.account_id }} · {{ account.platform }} · {{ account.status }}
+                    </div>
+                  </td>
+                  <td class="px-3 py-4 align-top">
+                    <div class="text-sm text-gray-900 dark:text-white">
+                      {{ formatUpstreamWindowStats(account.window_5h) }}
+                    </div>
+                    <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+                      标准 {{ formatUSD(account.window_5h?.standard_cost) }} · 用户扣费 {{ formatUSD(account.window_5h?.user_cost) }}
+                    </div>
+                    <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+                      上游 {{ formatPct(account.window_5h?.upstream_pct) }} · {{ formatWindow(account.window_5h?.window_start, account.window_5h?.window_end) }}
+                    </div>
+                  </td>
+                  <td class="px-3 py-4 align-top">
+                    <div class="text-sm text-gray-900 dark:text-white">
+                      {{ formatUpstreamWindowStats(account.window_7d) }}
+                    </div>
+                    <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+                      标准 {{ formatUSD(account.window_7d?.standard_cost) }} · 用户扣费 {{ formatUSD(account.window_7d?.user_cost) }}
+                    </div>
+                    <div class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+                      上游 {{ formatPct(account.window_7d?.upstream_pct) }} · {{ formatWindow(account.window_7d?.window_start, account.window_7d?.window_end) }}
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-dark-700 dark:bg-dark-900">
+          <div class="flex items-center justify-between gap-3">
+            <div>
               <h2 class="text-lg font-semibold text-gray-900 dark:text-white">下游 Key 分配明细</h2>
               <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
                 所有 Key 都挂在管理员账号下，使用 Key 名称区分下游使用者。
@@ -283,11 +346,14 @@ import type {
   AdminGroup,
   QuotaShareCalibrationStatusResponse,
   QuotaShareCalibrationSuggestion,
+  QuotaShareUpstreamAccountWindowStatus,
   QuotaShareStatusResponse
 } from '@/types'
 import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
 
 const appStore = useAppStore()
+const authStore = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -299,6 +365,7 @@ const calibrationStatus = ref<QuotaShareCalibrationStatusResponse | null>(null)
 const loadingGroups = ref(false)
 const loadingStatus = ref(false)
 const loadingCalibration = ref(false)
+const selectedGroupStorageKey = computed(() => `admin_quota_share:selected_group:${authStore.user?.id || 'anonymous'}`)
 
 const groupOptions = computed(() =>
   groups.value.map((group) => ({
@@ -328,6 +395,7 @@ const lastUpdatedLabel = computed(() => {
 
 const formatUSD = (value?: number | null) => `$${Number(value || 0).toFixed(2)}`
 const formatPct = (value?: number | null) => `${Number(value || 0).toFixed(1)}%`
+const formatInteger = (value?: number | null) => Number(value || 0).toLocaleString()
 
 const suggestionLabel = (status?: string | null) => {
   switch (status) {
@@ -366,6 +434,11 @@ const formatWindow = (start?: number, end?: number) => {
   return `${startLabel} → ${endLabel}`
 }
 
+const formatUpstreamWindowStats = (window?: QuotaShareUpstreamAccountWindowStatus | null) => {
+  if (!window?.window_start || !window?.window_end) return '窗口尚未初始化'
+  return `${formatInteger(window.requests)} 请求 · ${formatInteger(window.tokens)} tokens · 账号计费 ${formatUSD(window.cost)}`
+}
+
 const clampPct = (used: number, limit: number) => {
   if (!limit || limit <= 0) return 0
   return Math.min((used / limit) * 100, 100)
@@ -384,7 +457,23 @@ const syncGroupQuery = (groupId: number | null) => {
   } else {
     delete nextQuery.group_id
   }
-  router.replace({ query: nextQuery })
+  const current = route.query.group_id ? String(route.query.group_id) : ''
+  const next = groupId ? String(groupId) : ''
+  if (current !== next) {
+    router.replace({ query: nextQuery })
+  }
+}
+
+const readStoredGroupId = () => {
+  const raw = window.localStorage.getItem(selectedGroupStorageKey.value)
+  const id = Number(raw || 0)
+  return Number.isFinite(id) && id > 0 ? id : 0
+}
+
+const rememberGroupId = (groupId: number | null) => {
+  if (groupId) {
+    window.localStorage.setItem(selectedGroupStorageKey.value, String(groupId))
+  }
 }
 
 const loadGroups = async () => {
@@ -397,14 +486,16 @@ const loadGroups = async () => {
     groups.value = (response.items || []).filter((group) => group.subscription_type === 'quota_share')
 
     const queryGroupId = Number(route.query.group_id || 0)
+    const storedGroupId = readStoredGroupId()
     const preferredGroup =
       groups.value.find((group) => group.id === queryGroupId) ||
-      groups.value.find((group) => group.id === selectedGroupId.value) ||
+      groups.value.find((group) => group.id === storedGroupId) ||
       groups.value[0] ||
       null
 
     selectedGroupId.value = preferredGroup?.id ?? null
     selectedGroup.value = preferredGroup
+    rememberGroupId(selectedGroupId.value)
     syncGroupQuery(selectedGroupId.value)
   } catch (error) {
     console.error('Failed to load quota share groups:', error)
@@ -464,14 +555,16 @@ const discardCalibration = async (window: '5h' | '7d' | 'all') => {
 }
 
 const refreshAll = async () => {
+  const previousGroupId = selectedGroupId.value
   await loadGroups()
-  if (selectedGroupId.value) {
+  if (selectedGroupId.value && selectedGroupId.value === previousGroupId) {
     await loadGroupStatus(selectedGroupId.value)
   }
 }
 
 watch(selectedGroupId, async (groupId) => {
   syncGroupQuery(groupId)
+  rememberGroupId(groupId)
   if (!groupId) {
     selectedGroup.value = null
     status.value = null
