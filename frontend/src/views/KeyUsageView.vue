@@ -330,6 +330,124 @@
               </table>
             </div>
           </div>
+
+          <!-- Usage Logs Table -->
+          <div
+            class="fade-up fade-up-delay-4 rounded-2xl border border-gray-200 bg-white/90 backdrop-blur-sm overflow-hidden dark:border-dark-700 dark:bg-dark-900/90"
+          >
+            <div class="px-6 py-5 border-b border-gray-200 dark:border-dark-700">
+              <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h3 class="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.usageDetails') }}</h3>
+                  <div v-if="usageLogStats" class="mt-2 flex flex-wrap gap-2 text-xs text-gray-500 dark:text-dark-400">
+                    <span class="rounded-lg bg-gray-100 px-2.5 py-1 dark:bg-dark-800">{{ t('keyUsage.requests') }} {{ fmtNum(usageLogStats.total_requests) }}</span>
+                    <span class="rounded-lg bg-gray-100 px-2.5 py-1 dark:bg-dark-800">{{ t('keyUsage.totalTokens') }} {{ fmtNum(usageLogStats.total_tokens) }}</span>
+                    <span class="rounded-lg bg-gray-100 px-2.5 py-1 dark:bg-dark-800">{{ t('keyUsage.cost') }} {{ usd(usageLogStats.total_actual_cost) }}</span>
+                    <span class="rounded-lg bg-gray-100 px-2.5 py-1 dark:bg-dark-800">{{ t('keyUsage.avgDuration') }} {{ formatMs(usageLogStats.average_duration_ms) }}</span>
+                  </div>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <input
+                    v-model.trim="usageLogModelFilter"
+                    type="text"
+                    :placeholder="t('keyUsage.filterModel')"
+                    class="input-ring h-9 w-36 rounded-lg border border-gray-200 bg-white px-3 text-xs text-gray-900 dark:border-dark-700 dark:bg-dark-950 dark:text-white"
+                    @keydown.enter="applyUsageLogFilters"
+                  />
+                  <select
+                    v-model="usageLogRequestTypeFilter"
+                    class="input-ring h-9 rounded-lg border border-gray-200 bg-white px-3 text-xs text-gray-900 dark:border-dark-700 dark:bg-dark-950 dark:text-white"
+                    @change="applyUsageLogFilters"
+                  >
+                    <option value="">{{ t('keyUsage.allTypes') }}</option>
+                    <option value="sync">{{ t('keyUsage.typeSync') }}</option>
+                    <option value="stream">{{ t('keyUsage.typeStream') }}</option>
+                    <option value="ws_v2">{{ t('keyUsage.typeWs') }}</option>
+                  </select>
+                  <button
+                    @click="applyUsageLogFilters"
+                    :disabled="usageLogsLoading"
+                    class="h-9 rounded-lg border border-gray-200 bg-white px-3 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60 dark:border-dark-700 dark:bg-dark-950 dark:text-dark-200 dark:hover:bg-dark-800"
+                  >{{ t('keyUsage.refresh') }}</button>
+                  <button
+                    @click="exportUsageLogsCsv"
+                    :disabled="usageLogsExporting || usageLogsLoading"
+                    class="h-9 rounded-lg bg-primary-500 px-3 text-xs font-medium text-white transition-colors hover:bg-primary-600 disabled:opacity-60"
+                  >{{ usageLogsExporting ? t('keyUsage.exporting') : t('keyUsage.exportCsv') }}</button>
+                </div>
+              </div>
+            </div>
+            <div v-if="usageLogsError" class="px-6 py-4 text-sm text-rose-500">
+              {{ usageLogsError }}
+            </div>
+            <div v-else-if="usageLogsLoading" class="p-6 space-y-3">
+              <div class="skeleton h-4 w-full"></div>
+              <div class="skeleton h-4 w-5/6"></div>
+              <div class="skeleton h-4 w-4/5"></div>
+            </div>
+            <div v-else-if="usageLogs.length === 0" class="px-6 py-10 text-center text-sm text-gray-500 dark:text-dark-400">
+              {{ t('keyUsage.noUsageLogs') }}
+            </div>
+            <div v-else class="overflow-x-auto">
+              <table class="w-full min-w-[980px]">
+                <thead>
+                  <tr class="border-b border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-950">
+                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.time') }}</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.model') }}</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.type') }}</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.endpoint') }}</th>
+                    <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.tokens') }}</th>
+                    <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.cost') }}</th>
+                    <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.firstToken') }}</th>
+                    <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.duration') }}</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-dark-400">{{ t('keyUsage.userAgent') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="(log, i) in usageLogs"
+                    :key="`${log.created_at}-${i}`"
+                    class="border-b border-gray-100 last:border-b-0 dark:border-dark-800"
+                  >
+                    <td class="px-4 py-3 text-xs tabular-nums whitespace-nowrap text-gray-600 dark:text-dark-300">{{ formatDateTime(log.created_at) }}</td>
+                    <td class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-white">
+                      <div class="max-w-[180px] truncate" :title="log.model || '-'">{{ log.model || '-' }}</div>
+                      <div v-if="log.reasoning_effort" class="mt-0.5 text-xs text-gray-400 dark:text-dark-500">{{ log.reasoning_effort }}</div>
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-dark-200">{{ requestTypeLabel(log.request_type) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-dark-200">
+                      <div class="max-w-[160px] truncate" :title="formatEndpoint(log)">{{ formatEndpoint(log) }}</div>
+                      <div v-if="log.billing_mode" class="mt-0.5 text-xs text-gray-400 dark:text-dark-500">{{ log.billing_mode }}</div>
+                    </td>
+                    <td class="px-4 py-3 text-sm tabular-nums text-right text-gray-700 dark:text-dark-200">{{ fmtNum(log.total_tokens) }}</td>
+                    <td class="px-4 py-3 text-sm tabular-nums text-right font-medium text-gray-900 dark:text-white">{{ usd(log.actual_cost) }}</td>
+                    <td class="px-4 py-3 text-sm tabular-nums text-right text-gray-700 dark:text-dark-200">{{ formatMs(log.first_token_ms) }}</td>
+                    <td class="px-4 py-3 text-sm tabular-nums text-right text-gray-700 dark:text-dark-200">{{ formatMs(log.duration_ms) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600 dark:text-dark-300">
+                      <div class="max-w-[220px] truncate" :title="log.user_agent || '-'">{{ log.user_agent || '-' }}</div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <div class="flex flex-col gap-3 border-t border-gray-200 px-4 py-3 text-sm dark:border-dark-700 sm:flex-row sm:items-center sm:justify-between">
+                <div class="text-gray-500 dark:text-dark-400">
+                  {{ t('keyUsage.pageSummary', { page: usageLogsPage, pages: usageLogsPages, total: fmtNum(usageLogsTotal) }) }}
+                </div>
+                <div class="flex items-center gap-2">
+                  <button
+                    @click="changeUsageLogsPage(usageLogsPage - 1)"
+                    :disabled="usageLogsPage <= 1 || usageLogsLoading"
+                    class="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 disabled:opacity-50 dark:border-dark-700 dark:text-dark-200"
+                  >{{ t('keyUsage.prevPage') }}</button>
+                  <button
+                    @click="changeUsageLogsPage(usageLogsPage + 1)"
+                    :disabled="usageLogsPage >= usageLogsPages || usageLogsLoading"
+                    class="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 disabled:opacity-50 dark:border-dark-700 dark:text-dark-200"
+                  >{{ t('keyUsage.nextPage') }}</button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </main>
@@ -366,6 +484,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Icon from '@/components/icons/Icon.vue'
+import type { PaginatedResponse, PublicKeyUsageLog, PublicKeyUsageStats, UsageRequestType } from '@/types'
 
 const { t, locale } = useI18n()
 const appStore = useAppStore()
@@ -401,6 +520,21 @@ const showDatePicker = ref(false)
 const resultData = ref<any>(null)
 const now = ref(new Date())
 let resetTimer: ReturnType<typeof setInterval> | null = null
+const lastQueriedKey = ref('')
+
+// ==================== Usage Logs State ====================
+
+const usageLogs = ref<PublicKeyUsageLog[]>([])
+const usageLogStats = ref<PublicKeyUsageStats | null>(null)
+const usageLogsLoading = ref(false)
+const usageLogsExporting = ref(false)
+const usageLogsError = ref('')
+const usageLogsPage = ref(1)
+const usageLogsPageSize = ref(20)
+const usageLogsTotal = ref(0)
+const usageLogsPages = ref(1)
+const usageLogModelFilter = ref('')
+const usageLogRequestTypeFilter = ref<'' | UsageRequestType>('')
 
 // ==================== Date Range State ====================
 
@@ -817,11 +951,42 @@ function fmtNum(val: number | null | undefined): string {
   return val.toLocaleString()
 }
 
+function formatMs(val: number | null | undefined): string {
+  if (val == null || Number.isNaN(Number(val))) return '-'
+  return `${Math.round(Number(val)).toLocaleString()} ms`
+}
+
 function formatDate(iso: string | null | undefined): string {
   if (!iso) return '-'
   const d = new Date(iso)
   const loc = locale.value === 'zh' ? 'zh-CN' : 'en-US'
   return d.toLocaleDateString(loc, { year: 'numeric', month: 'long', day: 'numeric' })
+}
+
+function formatDateTime(iso: string | null | undefined): string {
+  if (!iso) return '-'
+  const d = new Date(iso)
+  const loc = locale.value === 'zh' ? 'zh-CN' : 'en-US'
+  return d.toLocaleString(loc, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function requestTypeLabel(type: UsageRequestType | string | null | undefined): string {
+  switch (type) {
+    case 'sync': return t('keyUsage.typeSync')
+    case 'stream': return t('keyUsage.typeStream')
+    case 'ws_v2': return t('keyUsage.typeWs')
+    default: return t('keyUsage.typeUnknown')
+  }
+}
+
+function formatEndpoint(log: PublicKeyUsageLog): string {
+  return log.inbound_endpoint || log.upstream_endpoint || '-'
 }
 
 // ==================== API Query ====================
@@ -840,6 +1005,166 @@ async function fetchUsage(key: string) {
   return await res.json()
 }
 
+function getUserTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone
+  } catch {
+    return 'UTC'
+  }
+}
+
+function buildUsageLogParams(page: number, pageSize: number): URLSearchParams {
+  const params = new URLSearchParams(getDateParams())
+  params.set('page', String(page))
+  params.set('page_size', String(pageSize))
+  params.set('sort_by', 'created_at')
+  params.set('sort_order', 'desc')
+  params.set('timezone', getUserTimezone())
+  if (usageLogModelFilter.value) {
+    params.set('model', usageLogModelFilter.value)
+  }
+  if (usageLogRequestTypeFilter.value) {
+    params.set('request_type', usageLogRequestTypeFilter.value)
+  }
+  return params
+}
+
+async function fetchKeyUsageJson<T>(key: string, path: string, params: URLSearchParams): Promise<T> {
+  const res = await fetch(`${path}?${params.toString()}`, {
+    headers: { 'Authorization': 'Bearer ' + key },
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    const msg = body?.error?.message || body?.message || `${t('keyUsage.queryFailed')} (${res.status})`
+    throw new Error(msg)
+  }
+  return await res.json() as T
+}
+
+async function loadUsageDetails(key = lastQueriedKey.value) {
+  if (!key) return
+  usageLogsLoading.value = true
+  usageLogsError.value = ''
+  try {
+    const listParams = buildUsageLogParams(usageLogsPage.value, usageLogsPageSize.value)
+    const statsParams = buildUsageLogParams(1, 1)
+    statsParams.delete('page')
+    statsParams.delete('page_size')
+
+    const [logsResp, statsResp] = await Promise.all([
+      fetchKeyUsageJson<PaginatedResponse<PublicKeyUsageLog>>(key, '/v1/usage/logs', listParams),
+      fetchKeyUsageJson<PublicKeyUsageStats>(key, '/v1/usage/logs/stats', statsParams),
+    ])
+
+    usageLogs.value = logsResp.items || []
+    usageLogsTotal.value = logsResp.total || 0
+    usageLogsPage.value = logsResp.page || usageLogsPage.value
+    usageLogsPageSize.value = logsResp.page_size || usageLogsPageSize.value
+    usageLogsPages.value = logsResp.pages || 1
+    usageLogStats.value = statsResp
+  } catch (err) {
+    usageLogs.value = []
+    usageLogStats.value = null
+    usageLogsTotal.value = 0
+    usageLogsPages.value = 1
+    usageLogsError.value = (err as Error).message || t('keyUsage.usageLogsFailed')
+  } finally {
+    usageLogsLoading.value = false
+  }
+}
+
+function applyUsageLogFilters() {
+  usageLogsPage.value = 1
+  loadUsageDetails()
+}
+
+function changeUsageLogsPage(page: number) {
+  if (page < 1 || page > usageLogsPages.value || page === usageLogsPage.value) return
+  usageLogsPage.value = page
+  loadUsageDetails()
+}
+
+function csvCell(value: unknown): string {
+  if (value == null) return '""'
+  let text = String(value)
+  if (/^[=+\-@\t\r]/.test(text)) {
+    text = `'${text}`
+  }
+  return `"${text.replace(/"/g, '""')}"`
+}
+
+function downloadCsv(filename: string, rows: string[][]) {
+  const csv = rows.map(row => row.map(csvCell).join(',')).join('\n')
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+async function exportUsageLogsCsv() {
+  const key = lastQueriedKey.value
+  if (!key || usageLogsExporting.value) return
+  usageLogsExporting.value = true
+  try {
+    const rows: string[][] = [[
+      t('keyUsage.time'),
+      t('keyUsage.model'),
+      t('keyUsage.type'),
+      t('keyUsage.endpoint'),
+      t('keyUsage.inputTokens'),
+      t('keyUsage.outputTokens'),
+      t('keyUsage.cacheCreationTokens'),
+      t('keyUsage.cacheReadTokens'),
+      t('keyUsage.totalTokens'),
+      t('keyUsage.cost'),
+      t('keyUsage.firstToken'),
+      t('keyUsage.duration'),
+      t('keyUsage.userAgent'),
+      'billing_mode',
+    ]]
+
+    let page = 1
+    const pageSize = 1000
+    let pages = 1
+    do {
+      const params = buildUsageLogParams(page, pageSize)
+      const resp = await fetchKeyUsageJson<PaginatedResponse<PublicKeyUsageLog>>(key, '/v1/usage/logs', params)
+      pages = resp.pages || 1
+      for (const log of resp.items || []) {
+        rows.push([
+          formatDateTime(log.created_at),
+          log.model || '',
+          requestTypeLabel(log.request_type),
+          formatEndpoint(log),
+          String(log.input_tokens || 0),
+          String(log.output_tokens || 0),
+          String(log.cache_creation_tokens || 0),
+          String(log.cache_read_tokens || 0),
+          String(log.total_tokens || 0),
+          String(log.actual_cost || 0),
+          log.first_token_ms == null ? '' : String(log.first_token_ms),
+          log.duration_ms == null ? '' : String(log.duration_ms),
+          log.user_agent || '',
+          log.billing_mode || '',
+        ])
+      }
+      page += 1
+    } while (page <= pages)
+
+    downloadCsv(`usage-logs-${new Date().toISOString().slice(0, 10)}.csv`, rows)
+    appStore.showSuccess(t('keyUsage.exportSuccess'))
+  } catch (err) {
+    appStore.showError((err as Error).message || t('keyUsage.exportFailed'))
+  } finally {
+    usageLogsExporting.value = false
+  }
+}
+
 async function queryKey() {
   if (isQuerying.value) return
   const key = apiKey.value.trim()
@@ -852,12 +1177,18 @@ async function queryKey() {
   showResults.value = true
   showLoading.value = true
   resultData.value = null
+  usageLogs.value = []
+  usageLogStats.value = null
+  usageLogsError.value = ''
+  usageLogsPage.value = 1
 
   try {
     const data = await fetchUsage(key)
+    lastQueriedKey.value = key
     resultData.value = data
     showLoading.value = false
     showDatePicker.value = true
+    loadUsageDetails(key)
 
     // Trigger ring animations after DOM update
     nextTick(() => {

@@ -31,6 +31,10 @@ func RegisterGatewayRoutes(
 	requireGroupAnthropic := middleware.RequireGroupAssignment(settingService, middleware.AnthropicErrorWriter)
 	requireGroupGoogle := middleware.RequireGroupAssignment(settingService, middleware.GoogleErrorWriter)
 
+	// API key 自助用量明细：只读查询，只需要 API key 鉴权，不要求已分组，也不触发计费拦截。
+	r.GET("/v1/usage/logs", clientRequestID, gin.HandlerFunc(apiKeyAuth), h.Gateway.UsageLogs)
+	r.GET("/v1/usage/logs/stats", clientRequestID, gin.HandlerFunc(apiKeyAuth), h.Gateway.UsageLogStats)
+
 	// API网关（Claude API兼容）
 	gateway := r.Group("/v1")
 	gateway.Use(bodyLimit)

@@ -126,8 +126,9 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 
 		// ── 5. 加载订阅（订阅模式时始终加载） ───────────────────────
 
-		// skipBilling: /v1/usage 只需鉴权，跳过所有计费执行
-		skipBilling := c.Request.URL.Path == "/v1/usage"
+		// skipBilling: /v1/usage 和 /v1/usage/logs* 只需鉴权，跳过所有计费执行。
+		// 这样过期或额度耗尽的 Key 仍可查询自己的历史用量。
+		skipBilling := isReadOnlyUsagePath(c.Request.URL.Path)
 
 		var subscription *service.UserSubscription
 		isSubscriptionType := apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
@@ -222,6 +223,10 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 
 		c.Next()
 	}
+}
+
+func isReadOnlyUsagePath(path string) bool {
+	return path == "/v1/usage" || strings.HasPrefix(path, "/v1/usage/logs")
 }
 
 // GetAPIKeyFromContext 从上下文中获取API key

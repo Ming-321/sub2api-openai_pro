@@ -1271,6 +1271,40 @@ export interface AdminUsageLog extends UsageLog {
   account?: UsageLogAccountSummary
 }
 
+export interface PublicKeyUsageLog {
+  created_at: string
+  model: string
+  service_tier?: string | null
+  reasoning_effort?: string | null
+  inbound_endpoint?: string | null
+  upstream_endpoint?: string | null
+  request_type: UsageRequestType
+  input_tokens: number
+  output_tokens: number
+  cache_creation_tokens: number
+  cache_read_tokens: number
+  cache_creation_5m_tokens: number
+  cache_creation_1h_tokens: number
+  image_output_tokens: number
+  image_output_cost: number
+  total_tokens: number
+  actual_cost: number
+  duration_ms: number | null
+  first_token_ms: number | null
+  user_agent?: string | null
+  billing_mode?: string | null
+}
+
+export interface PublicKeyUsageStats {
+  total_requests: number
+  total_input_tokens: number
+  total_output_tokens: number
+  total_cache_tokens: number
+  total_tokens: number
+  total_actual_cost: number
+  average_duration_ms: number
+}
+
 export interface UsageCleanupFilters {
   start_time: string
   end_time: string
