@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 9 // v9: added QuotaShareOverflowGroupID for quota_share overflow routing
+const apiKeyAuthSnapshotVersion = 10 // v10: includes API key name and quota_share overflow routing
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -211,6 +211,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 		UserID:                    apiKey.UserID,
 		GroupID:                   apiKey.GroupID,
 		QuotaShareOverflowGroupID: apiKey.QuotaShareOverflowGroupID,
+		Name:                      apiKey.Name,
 		Status:                    apiKey.Status,
 		IPWhitelist:               apiKey.IPWhitelist,
 		IPBlacklist:               apiKey.IPBlacklist,
@@ -257,6 +258,9 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			DailyLimitUSD:                   apiKey.Group.DailyLimitUSD,
 			WeeklyLimitUSD:                  apiKey.Group.WeeklyLimitUSD,
 			MonthlyLimitUSD:                 apiKey.Group.MonthlyLimitUSD,
+			AllowImageGeneration:            apiKey.Group.AllowImageGeneration,
+			ImageRateIndependent:            apiKey.Group.ImageRateIndependent,
+			ImageRateMultiplier:             apiKey.Group.ImageRateMultiplier,
 			ImagePrice1K:                    apiKey.Group.ImagePrice1K,
 			ImagePrice2K:                    apiKey.Group.ImagePrice2K,
 			ImagePrice4K:                    apiKey.Group.ImagePrice4K,
@@ -286,6 +290,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 		GroupID:                   snapshot.GroupID,
 		QuotaShareOverflowGroupID: snapshot.QuotaShareOverflowGroupID,
 		Key:                       key,
+		Name:                      snapshot.Name,
 		Status:                    snapshot.Status,
 		IPWhitelist:               snapshot.IPWhitelist,
 		IPBlacklist:               snapshot.IPBlacklist,
@@ -325,6 +330,9 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			DailyLimitUSD:                   snapshot.Group.DailyLimitUSD,
 			WeeklyLimitUSD:                  snapshot.Group.WeeklyLimitUSD,
 			MonthlyLimitUSD:                 snapshot.Group.MonthlyLimitUSD,
+			AllowImageGeneration:            snapshot.Group.AllowImageGeneration,
+			ImageRateIndependent:            snapshot.Group.ImageRateIndependent,
+			ImageRateMultiplier:             snapshot.Group.ImageRateMultiplier,
 			ImagePrice1K:                    snapshot.Group.ImagePrice1K,
 			ImagePrice2K:                    snapshot.Group.ImagePrice2K,
 			ImagePrice4K:                    snapshot.Group.ImagePrice4K,
