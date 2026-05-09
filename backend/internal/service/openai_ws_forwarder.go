@@ -1394,6 +1394,42 @@ func shouldInferIngressFunctionCallOutputPreviousResponseID(
 	return strings.TrimSpace(expectedPreviousResponseID) != ""
 }
 
+func analyzeOpenAIWSToolContinuationSignalsFromRawPayload(payload []byte) (ToolContinuationSignals, bool) {
+	signals := ToolContinuationSignals{}
+	if len(payload) == 0 {
+		return signals, true
+	}
+	var reqBody map[string]any
+	if err := json.Unmarshal(payload, &reqBody); err != nil {
+		return signals, false
+	}
+	return AnalyzeToolContinuationSignals(reqBody), true
+}
+
+func openAIWSPayloadRequiresPreviousResponseIDForFunctionCallOutput(payload []byte) bool {
+	if !bytes.Contains(payload, []byte("function_call_output")) {
+		return false
+	}
+	signals, ok := analyzeOpenAIWSToolContinuationSignalsFromRawPayload(payload)
+	if !ok {
+		// If parsing fails, keep the continuation anchor. Dropping it can create
+		// an upstream-invalid function_call_output request.
+		return true
+	}
+	return signals.HasFunctionCallOutput && !signals.HasToolCallContext
+}
+
+func openAIWSPayloadHasFunctionCallOutput(payload []byte) bool {
+	if !bytes.Contains(payload, []byte("function_call_output")) {
+		return false
+	}
+	signals, ok := analyzeOpenAIWSToolContinuationSignalsFromRawPayload(payload)
+	if !ok {
+		return gjson.GetBytes(payload, `input.#(type=="function_call_output")`).Exists()
+	}
+	return signals.HasFunctionCallOutput
+}
+
 func alignStoreDisabledPreviousResponseID(
 	payload []byte,
 	expectedPreviousResponseID string,
@@ -2845,7 +2881,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		turnPreviousResponseIDKind := ClassifyOpenAIPreviousResponseIDKind(turnPreviousResponseID)
 		turnPromptCacheKey := openAIWSPayloadStringFromRaw(payload, "prompt_cache_key")
 		turnStoreDisabled := s.isOpenAIWSStoreDisabledInRequestRaw(payload, account)
-		turnHasFunctionCallOutput := gjson.GetBytes(payload, `input.#(type=="function_call_output")`).Exists()
+		turnHasFunctionCallOutput := openAIWSPayloadHasFunctionCallOutput(payload)
 		eventCount := 0
 		tokenEventCount := 0
 		terminalEventCount := 0
@@ -3139,7 +3175,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		// 携带 function_call_output 的请求不能丢弃 previous_response_id：
 		// 上游 API 需要 response chain 来匹配 tool_result 与之前的 tool_use，
 		// 丢弃后会导致 "No tool call found for function call output" 400 错误。
-		if gjson.GetBytes(currentPayload, `input.#(type=="function_call_output")`).Exists() {
+		if openAIWSPayloadRequiresPreviousResponseIDForFunctionCallOutput(currentPayload) {
 			return false
 		}
 		if isStrictAffinityTurn(currentPayload) {
@@ -3181,6 +3217,16 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				turn,
 				truncateOpenAIWSLogValue(connID, openAIWSIDValueMaxLen),
 				truncateOpenAIWSLogValue(setInputErr.Error(), openAIWSLogValueMaxLen),
+			)
+			return false
+		}
+		if openAIWSPayloadRequiresPreviousResponseIDForFunctionCallOutput(updatedWithInput) {
+			logOpenAIWSModeInfo(
+				"ingress_ws_prev_response_recovery_skip account_id=%d turn=%d conn_id=%s reason=function_call_output_requires_previous_response_id previous_response_id=%s",
+				account.ID,
+				turn,
+				truncateOpenAIWSLogValue(connID, openAIWSIDValueMaxLen),
+				truncateOpenAIWSLogValue(openAIWSPayloadStringFromRaw(currentPayload, "previous_response_id"), openAIWSIDValueMaxLen),
 			)
 			return false
 		}
@@ -3236,13 +3282,12 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		skipBeforeTurn = false
 		currentPreviousResponseID := openAIWSPayloadStringFromRaw(currentPayload, "previous_response_id")
 		expectedPrev := strings.TrimSpace(lastTurnResponseID)
-		toolSignals := ToolContinuationSignals{
-			HasFunctionCallOutput: gjson.GetBytes(currentPayload, `input.#(type=="function_call_output")`).Exists(),
-		}
-		if toolSignals.HasFunctionCallOutput {
-			var currentReqBody map[string]any
-			if err := json.Unmarshal(currentPayload, &currentReqBody); err == nil {
-				toolSignals = AnalyzeToolContinuationSignals(currentReqBody)
+		toolSignals := ToolContinuationSignals{}
+		if bytes.Contains(currentPayload, []byte("function_call_output")) {
+			if signals, ok := analyzeOpenAIWSToolContinuationSignalsFromRawPayload(currentPayload); ok {
+				toolSignals = signals
+			} else {
+				toolSignals.HasFunctionCallOutput = gjson.GetBytes(currentPayload, `input.#(type=="function_call_output")`).Exists()
 			}
 		}
 		hasFunctionCallOutput := toolSignals.HasFunctionCallOutput
@@ -3416,8 +3461,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					// 携带 function_call_output 的请求不能丢弃 previous_response_id：
 					// 上游 API 需要 response chain 来匹配 tool_result 与之前的 tool_use，
 					// 丢弃后会导致 "No tool call found for function call output" 400 错误。
-					hasFCOutput := gjson.GetBytes(currentPayload, `input.#(type=="function_call_output")`).Exists()
-					if !turnPrevRecoveryTried && currentPreviousResponseID != "" && !hasFCOutput {
+					if !turnPrevRecoveryTried && currentPreviousResponseID != "" && !openAIWSPayloadRequiresPreviousResponseIDForFunctionCallOutput(currentPayload) {
 						updatedPayload, removed, dropErr := dropPreviousResponseIDFromRawPayload(currentPayload)
 						if dropErr != nil || !removed {
 							reason := "not_removed"
@@ -3446,6 +3490,14 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 									truncateOpenAIWSLogValue(sessionConnID, openAIWSIDValueMaxLen),
 									truncateOpenAIWSLogValue(currentPreviousResponseID, openAIWSIDValueMaxLen),
 									truncateOpenAIWSLogValue(setInputErr.Error(), openAIWSLogValueMaxLen),
+								)
+							} else if openAIWSPayloadRequiresPreviousResponseIDForFunctionCallOutput(updatedWithInput) {
+								logOpenAIWSModeInfo(
+									"ingress_ws_preflight_ping_recovery_skip account_id=%d turn=%d conn_id=%s reason=function_call_output_requires_previous_response_id previous_response_id=%s",
+									account.ID,
+									turn,
+									truncateOpenAIWSLogValue(sessionConnID, openAIWSIDValueMaxLen),
+									truncateOpenAIWSLogValue(currentPreviousResponseID, openAIWSIDValueMaxLen),
 								)
 							} else {
 								logOpenAIWSModeInfo(

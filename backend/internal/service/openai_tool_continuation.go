@@ -53,7 +53,9 @@ func NeedsToolContinuation(reqBody map[string]any) bool {
 	return false
 }
 
-// AnalyzeToolContinuationSignals 单次遍历 input，提取 function_call_output/tool_call/item_reference 相关信号。
+// AnalyzeToolContinuationSignals 遍历 input，提取 function_call_output/tool_call/item_reference 相关信号。
+// 常规 Responses 请求中这些 item 位于 input 顶层；WS replay/兼容转换路径中可能
+// 被包装到更深层结构。这里递归扫描 input 内的 map/slice，避免漏判工具续链。
 func AnalyzeToolContinuationSignals(reqBody map[string]any) ToolContinuationSignals {
 	signals := ToolContinuationSignals{}
 	if reqBody == nil {
@@ -67,42 +69,64 @@ func AnalyzeToolContinuationSignals(reqBody map[string]any) ToolContinuationSign
 	var callIDs map[string]struct{}
 	var referenceIDs map[string]struct{}
 
-	for _, item := range input {
+	var visit func(item any)
+	visit = func(item any) {
 		itemMap, ok := item.(map[string]any)
-		if !ok {
-			continue
+		if ok {
+			itemType, _ := itemMap["type"].(string)
+			switch itemType {
+			case "tool_call", "function_call":
+				callID, _ := itemMap["call_id"].(string)
+				if strings.TrimSpace(callID) != "" {
+					signals.HasToolCallContext = true
+				}
+			case "function_call_output":
+				signals.HasFunctionCallOutput = true
+				callID, _ := itemMap["call_id"].(string)
+				callID = strings.TrimSpace(callID)
+				if callID == "" {
+					signals.HasFunctionCallOutputMissingCallID = true
+					break
+				}
+				if callIDs == nil {
+					callIDs = make(map[string]struct{})
+				}
+				callIDs[callID] = struct{}{}
+			case "item_reference":
+				signals.HasItemReference = true
+				idValue, _ := itemMap["id"].(string)
+				idValue = strings.TrimSpace(idValue)
+				if idValue == "" {
+					break
+				}
+				if referenceIDs == nil {
+					referenceIDs = make(map[string]struct{})
+				}
+				referenceIDs[idValue] = struct{}{}
+			}
+
+			for _, child := range itemMap {
+				switch typed := child.(type) {
+				case map[string]any:
+					visit(typed)
+				case []any:
+					for _, nested := range typed {
+						visit(nested)
+					}
+				}
+			}
+			return
 		}
-		itemType, _ := itemMap["type"].(string)
-		switch itemType {
-		case "tool_call", "function_call":
-			callID, _ := itemMap["call_id"].(string)
-			if strings.TrimSpace(callID) != "" {
-				signals.HasToolCallContext = true
+
+		if items, ok := item.([]any); ok {
+			for _, nested := range items {
+				visit(nested)
 			}
-		case "function_call_output":
-			signals.HasFunctionCallOutput = true
-			callID, _ := itemMap["call_id"].(string)
-			callID = strings.TrimSpace(callID)
-			if callID == "" {
-				signals.HasFunctionCallOutputMissingCallID = true
-				continue
-			}
-			if callIDs == nil {
-				callIDs = make(map[string]struct{})
-			}
-			callIDs[callID] = struct{}{}
-		case "item_reference":
-			signals.HasItemReference = true
-			idValue, _ := itemMap["id"].(string)
-			idValue = strings.TrimSpace(idValue)
-			if idValue == "" {
-				continue
-			}
-			if referenceIDs == nil {
-				referenceIDs = make(map[string]struct{})
-			}
-			referenceIDs[idValue] = struct{}{}
 		}
+	}
+
+	for _, item := range input {
+		visit(item)
 	}
 
 	if len(callIDs) == 0 {

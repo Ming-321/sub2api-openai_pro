@@ -377,6 +377,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	}
 
 	completedTurns := atomic.Int32{}
+	var lastResponseID atomic.Pointer[string]
 	policyClientConn := &openAIWSPolicyEnforcingFrameConn{
 		inner: &openAIWSClientFrameConn{conn: clientConn},
 		// 注意线程安全：filter 仅在 runClientToUpstream 这一条
@@ -387,7 +388,29 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			if msgType != coderws.MessageText {
 				return payload, nil, nil
 			}
-			if strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "response.create" && hooks != nil && hooks.BeforeRequest != nil {
+			isResponseCreate := strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "response.create"
+			if isResponseCreate {
+				currentPreviousResponseID := strings.TrimSpace(gjson.GetBytes(payload, "previous_response_id").String())
+				expectedPreviousResponseID := ""
+				if last := lastResponseID.Load(); last != nil {
+					expectedPreviousResponseID = strings.TrimSpace(*last)
+				}
+				if signals, ok := analyzeOpenAIWSToolContinuationSignalsFromRawPayload(payload); ok &&
+					shouldInferIngressFunctionCallOutputPreviousResponseID(
+						s.isOpenAIWSStoreDisabledInRequestRaw(payload, account),
+						int(completedTurns.Load())+1,
+						signals,
+						currentPreviousResponseID,
+						expectedPreviousResponseID,
+					) {
+					updated, setPrevErr := setPreviousResponseIDToRawPayload(payload, expectedPreviousResponseID)
+					if setPrevErr != nil {
+						return payload, nil, setPrevErr
+					}
+					payload = updated
+				}
+			}
+			if isResponseCreate && hooks != nil && hooks.BeforeRequest != nil {
 				turnNo := int(completedTurns.Load()) + 1
 				if turnNo < 2 {
 					turnNo = 2
@@ -473,6 +496,10 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			},
 			OnTurnComplete: func(turn openaiwsv2.RelayTurnResult) {
 				turnNo := int(completedTurns.Add(1))
+				if responseID := strings.TrimSpace(turn.RequestID); responseID != "" {
+					responseIDCopy := responseID
+					lastResponseID.Store(&responseIDCopy)
+				}
 				turnResult := &OpenAIForwardResult{
 					RequestID: turn.RequestID,
 					Usage: OpenAIUsage{

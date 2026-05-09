@@ -43,6 +43,16 @@ func TestHasFunctionCallOutput(t *testing.T) {
 	require.True(t, HasFunctionCallOutput(map[string]any{
 		"input": []any{map[string]any{"type": "function_call_output"}},
 	}))
+	require.True(t, HasFunctionCallOutput(map[string]any{
+		"input": []any{
+			map[string]any{
+				"type": "message",
+				"content": []any{
+					map[string]any{"type": "function_call_output", "call_id": "call_nested"},
+				},
+			},
+		},
+	}))
 	require.False(t, HasFunctionCallOutput(map[string]any{
 		"input": "text",
 	}))
@@ -57,6 +67,16 @@ func TestHasToolCallContext(t *testing.T) {
 	require.True(t, HasToolCallContext(map[string]any{
 		"input": []any{map[string]any{"type": "function_call", "call_id": "call_2"}},
 	}))
+	require.True(t, HasToolCallContext(map[string]any{
+		"input": []any{
+			map[string]any{
+				"type": "message",
+				"content": []any{
+					map[string]any{"type": "function_call", "call_id": "call_nested"},
+				},
+			},
+		},
+	}))
 	require.False(t, HasToolCallContext(map[string]any{
 		"input": []any{map[string]any{"type": "tool_call"}},
 	}))
@@ -70,9 +90,12 @@ func TestFunctionCallOutputCallIDs(t *testing.T) {
 			map[string]any{"type": "function_call_output", "call_id": "call_1"},
 			map[string]any{"type": "function_call_output", "call_id": ""},
 			map[string]any{"type": "function_call_output", "call_id": "call_1"},
+			map[string]any{"type": "message", "content": []any{
+				map[string]any{"type": "function_call_output", "call_id": "call_nested"},
+			}},
 		},
 	})
-	require.ElementsMatch(t, []string{"call_1"}, callIDs)
+	require.ElementsMatch(t, []string{"call_1", "call_nested"}, callIDs)
 }
 
 func TestHasFunctionCallOutputMissingCallID(t *testing.T) {
@@ -83,6 +106,14 @@ func TestHasFunctionCallOutputMissingCallID(t *testing.T) {
 	require.False(t, HasFunctionCallOutputMissingCallID(map[string]any{
 		"input": []any{map[string]any{"type": "function_call_output", "call_id": "call_1"}},
 	}))
+}
+
+func TestOpenAIWSPayloadRequiresPreviousResponseIDForNestedFunctionCallOutput(t *testing.T) {
+	payload := []byte(`{"type":"response.create","store":false,"input":[{"type":"message","content":[{"type":"function_call_output","call_id":"call_nested","output":"ok"}]}]}`)
+	require.True(t, openAIWSPayloadRequiresPreviousResponseIDForFunctionCallOutput(payload))
+
+	selfContained := []byte(`{"type":"response.create","store":false,"input":[{"type":"message","content":[{"type":"function_call","call_id":"call_nested"},{"type":"function_call_output","call_id":"call_nested","output":"ok"}]}]}`)
+	require.False(t, openAIWSPayloadRequiresPreviousResponseIDForFunctionCallOutput(selfContained))
 }
 
 func TestHasItemReferenceForCallIDs(t *testing.T) {
