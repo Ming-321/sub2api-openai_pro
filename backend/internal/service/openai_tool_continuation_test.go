@@ -98,6 +98,26 @@ func TestFunctionCallOutputCallIDs(t *testing.T) {
 	require.ElementsMatch(t, []string{"call_1", "call_nested"}, callIDs)
 }
 
+func TestAnalyzeToolContinuationSignalsRequiresMatchingToolCallContext(t *testing.T) {
+	signals := AnalyzeToolContinuationSignals(map[string]any{
+		"input": []any{
+			map[string]any{"type": "function_call", "call_id": "call_other"},
+			map[string]any{"type": "function_call_output", "call_id": "call_1", "output": "ok"},
+		},
+	})
+	require.True(t, signals.HasFunctionCallOutput)
+	require.True(t, signals.HasToolCallContext)
+	require.False(t, signals.HasToolCallContextForAllCallIDs)
+
+	selfContained := AnalyzeToolContinuationSignals(map[string]any{
+		"input": []any{
+			map[string]any{"type": "function_call", "call_id": "call_1"},
+			map[string]any{"type": "function_call_output", "call_id": "call_1", "output": "ok"},
+		},
+	})
+	require.True(t, selfContained.HasToolCallContextForAllCallIDs)
+}
+
 func TestHasFunctionCallOutputMissingCallID(t *testing.T) {
 	require.False(t, HasFunctionCallOutputMissingCallID(nil))
 	require.True(t, HasFunctionCallOutputMissingCallID(map[string]any{
@@ -114,6 +134,9 @@ func TestOpenAIWSPayloadRequiresPreviousResponseIDForNestedFunctionCallOutput(t 
 
 	selfContained := []byte(`{"type":"response.create","store":false,"input":[{"type":"message","content":[{"type":"function_call","call_id":"call_nested"},{"type":"function_call_output","call_id":"call_nested","output":"ok"}]}]}`)
 	require.False(t, openAIWSPayloadRequiresPreviousResponseIDForFunctionCallOutput(selfContained))
+
+	unmatchedToolContext := []byte(`{"type":"response.create","store":false,"input":[{"type":"message","content":[{"type":"function_call","call_id":"call_other"},{"type":"function_call_output","call_id":"call_nested","output":"ok"}]}]}`)
+	require.True(t, openAIWSPayloadRequiresPreviousResponseIDForFunctionCallOutput(unmatchedToolContext))
 }
 
 func TestHasItemReferenceForCallIDs(t *testing.T) {
