@@ -48,6 +48,18 @@ type RelayTurnResult struct {
 	FirstTokenMs      *int
 }
 
+type UpstreamErrorFrameEvent struct {
+	EventType    string
+	ErrorType    string
+	ErrorCode    string
+	ErrorMessage string
+	ErrorParam   string
+	Status       int
+	CallID       string
+	ResponseID   string
+	PayloadBytes int
+}
+
 type RelayExit struct {
 	Stage           string
 	Err             error
@@ -61,6 +73,7 @@ type RelayOptions struct {
 	FirstMessageType     coderws.MessageType
 	OnUsageParseFailure  func(eventType string, usageRaw string)
 	OnTurnComplete       func(turn RelayTurnResult)
+	OnUpstreamErrorFrame func(event UpstreamErrorFrameEvent)
 	OnTrace              func(event RelayTraceEvent)
 	Now                  func() time.Time
 }
@@ -98,6 +111,7 @@ type observedUpstreamEvent struct {
 	usage      Usage
 	duration   time.Duration
 	firstToken *int
+	errorFrame *UpstreamErrorFrameEvent
 }
 
 type relayTurnTiming struct {
@@ -201,6 +215,7 @@ func Relay(
 		state,
 		options.OnUsageParseFailure,
 		options.OnTurnComplete,
+		options.OnUpstreamErrorFrame,
 		&dropDownstreamWrites,
 		upstreamToClientFrames,
 		droppedDownstreamFrames,
@@ -367,6 +382,7 @@ func runUpstreamToClient(
 	state *relayState,
 	onUsageParseFailure func(eventType string, usageRaw string),
 	onTurnComplete func(turn RelayTurnResult),
+	onUpstreamErrorFrame func(event UpstreamErrorFrameEvent),
 	dropDownstreamWrites *atomic.Bool,
 	forwardedFrames *atomic.Int64,
 	droppedFrames *atomic.Int64,
@@ -401,6 +417,7 @@ func runUpstreamToClient(
 		case coderws.MessageBinary:
 			// binary frame 直接透传，不进入 JSON 观测路径（避免无效解析开销）。
 		}
+		emitUpstreamErrorFrame(onUpstreamErrorFrame, observedEvent.errorFrame)
 		emitTurnComplete(onTurnComplete, state, observedEvent)
 		if dropDownstreamWrites != nil && dropDownstreamWrites.Load() {
 			if droppedFrames != nil {
@@ -557,6 +574,9 @@ func observeUpstreamMessage(
 		responseID: responseID,
 		usage:      parsedUsage,
 	}
+	if eventType == "error" {
+		observed.errorFrame = observeUpstreamErrorFrame(message, eventType, responseID)
+	}
 	if responseID != "" {
 		turnTiming := openAIWSRelayGetOrInitTurnTiming(state, responseID, now)
 		if turnTiming != nil && turnTiming.firstTokenMs == nil && isTokenEvent(eventType) {
@@ -583,6 +603,92 @@ func observeUpstreamMessage(
 		}
 	}
 	return observed
+}
+
+func observeUpstreamErrorFrame(message []byte, eventType string, responseID string) *UpstreamErrorFrameEvent {
+	if len(message) == 0 || strings.TrimSpace(eventType) != "error" {
+		return nil
+	}
+	values := gjson.GetManyBytes(
+		message,
+		"error.type",
+		"error.code",
+		"error.message",
+		"error.param",
+		"status",
+		"error.call_id",
+		"call_id",
+		"response.id",
+		"response_id",
+	)
+	callID := strings.TrimSpace(values[5].String())
+	if callID == "" {
+		callID = strings.TrimSpace(values[6].String())
+	}
+	messageText := strings.TrimSpace(values[2].String())
+	if callID == "" {
+		callID = extractOpenAIWSV2CallIDFromText(messageText)
+	}
+	respID := strings.TrimSpace(responseID)
+	if respID == "" {
+		respID = strings.TrimSpace(values[7].String())
+	}
+	if respID == "" {
+		respID = strings.TrimSpace(values[8].String())
+	}
+	return &UpstreamErrorFrameEvent{
+		EventType:    strings.TrimSpace(eventType),
+		ErrorType:    strings.TrimSpace(values[0].String()),
+		ErrorCode:    strings.TrimSpace(values[1].String()),
+		ErrorMessage: messageText,
+		ErrorParam:   strings.TrimSpace(values[3].String()),
+		Status:       int(values[4].Int()),
+		CallID:       callID,
+		ResponseID:   respID,
+		PayloadBytes: len(message),
+	}
+}
+
+func extractOpenAIWSV2CallIDFromText(text string) string {
+	const prefix = "call_"
+	text = strings.TrimSpace(text)
+	candidate := ""
+	for offset := 0; offset < len(text); {
+		idx := strings.Index(text[offset:], prefix)
+		if idx < 0 {
+			break
+		}
+		start := offset + idx
+		end := start + len(prefix)
+		for end < len(text) {
+			c := text[end]
+			if (c >= 'a' && c <= 'z') ||
+				(c >= 'A' && c <= 'Z') ||
+				(c >= '0' && c <= '9') ||
+				c == '_' ||
+				c == '-' {
+				end++
+				continue
+			}
+			break
+		}
+		value := text[start:end]
+		if value != "" && value != "call_id" {
+			candidate = value
+		}
+		offset = end
+	}
+	return candidate
+}
+
+func emitUpstreamErrorFrame(
+	onUpstreamErrorFrame func(event UpstreamErrorFrameEvent),
+	event *UpstreamErrorFrameEvent,
+) {
+	if onUpstreamErrorFrame == nil || event == nil {
+		return
+	}
+	onUpstreamErrorFrame(*event)
 }
 
 func emitTurnComplete(

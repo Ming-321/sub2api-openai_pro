@@ -533,6 +533,21 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					hooks.AfterTurn(turnNo, turnResult, nil)
 				}
 			},
+			OnUpstreamErrorFrame: func(event openaiwsv2.UpstreamErrorFrameEvent) {
+				logOpenAIWSV2Passthrough(
+					"upstream_error_frame account_id=%d event_type=%s status=%d error_type=%s error_code=%s param=%s call_id=%s response_id=%s bytes=%d message=%s",
+					account.ID,
+					truncateOpenAIWSLogValue(event.EventType, openAIWSLogValueMaxLen),
+					event.Status,
+					truncateOpenAIWSLogValue(event.ErrorType, openAIWSLogValueMaxLen),
+					truncateOpenAIWSLogValue(event.ErrorCode, openAIWSLogValueMaxLen),
+					truncateOpenAIWSLogValue(event.ErrorParam, openAIWSLogValueMaxLen),
+					truncateOpenAIWSLogValue(event.CallID, openAIWSIDValueMaxLen),
+					truncateOpenAIWSLogValue(event.ResponseID, openAIWSIDValueMaxLen),
+					event.PayloadBytes,
+					truncateOpenAIWSLogValue(event.ErrorMessage, openAIWSLogValueMaxLen),
+				)
+			},
 			OnTrace: func(event openaiwsv2.RelayTraceEvent) {
 				logOpenAIWSV2Passthrough(
 					"relay_trace account_id=%d stage=%s direction=%s msg_type=%s bytes=%d graceful=%v wrote_downstream=%v err=%s",

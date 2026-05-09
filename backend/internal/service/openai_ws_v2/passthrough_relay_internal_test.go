@@ -120,6 +120,7 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 			&relayState{},
 			nil,
 			nil,
+			nil,
 			drop,
 			nil,
 			nil,
@@ -149,6 +150,7 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 			&relayState{},
 			nil,
 			nil,
+			nil,
 			drop,
 			nil,
 			nil,
@@ -158,6 +160,50 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 		)
 		sig := <-exitCh
 		require.Equal(t, "write_client", sig.stage)
+	})
+
+	t.Run("observes upstream error frame without changing forwarding", func(t *testing.T) {
+		t.Parallel()
+
+		exitCh := make(chan relayExitSignal, 1)
+		drop := &atomic.Bool{}
+		var observed UpstreamErrorFrameEvent
+		writes := make([]passthroughTestFrame, 0, 1)
+		errorPayload := []byte(`{"type":"error","error":{"type":"invalid_request_error","message":"No tool call found for function call output with call_id call_test123.","param":"input"},"status":400}`)
+		runUpstreamToClient(
+			context.Background(),
+			newPassthroughTestFrameConn([]passthroughTestFrame{
+				{msgType: coderws.MessageText, payload: errorPayload},
+			}, true),
+			func(msgType coderws.MessageType, payload []byte) error {
+				writes = append(writes, passthroughTestFrame{msgType: msgType, payload: append([]byte(nil), payload...)})
+				return nil
+			},
+			time.Now(),
+			time.Now,
+			&relayState{},
+			nil,
+			nil,
+			func(event UpstreamErrorFrameEvent) {
+				observed = event
+			},
+			drop,
+			nil,
+			nil,
+			func() {},
+			nil,
+			exitCh,
+		)
+		sig := <-exitCh
+		require.Equal(t, "read_upstream", sig.stage)
+		require.Equal(t, "error", observed.EventType)
+		require.Equal(t, "invalid_request_error", observed.ErrorType)
+		require.Equal(t, "input", observed.ErrorParam)
+		require.Equal(t, 400, observed.Status)
+		require.Equal(t, "call_test123", observed.CallID)
+		require.Equal(t, len(errorPayload), observed.PayloadBytes)
+		require.Len(t, writes, 1)
+		require.Equal(t, string(errorPayload), string(writes[0].payload))
 	})
 
 	t.Run("drop downstream and stop on terminal", func(t *testing.T) {
@@ -179,6 +225,7 @@ func TestRunUpstreamToClient_ErrorAndDropPaths(t *testing.T) {
 			time.Now(),
 			time.Now,
 			&relayState{},
+			nil,
 			nil,
 			nil,
 			drop,
