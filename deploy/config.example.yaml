@@ -241,11 +241,11 @@ gateway:
   openai_passthrough_allow_timeout_headers: false
   # OpenAI Responses WebSocket 配置（默认开启，可按需回滚到 HTTP）
   openai_ws:
-    # 新版 WS mode 路由（默认关闭）。关闭时保持当前 legacy 实现行为。
-    mode_router_v2_enabled: false
+    # 新版 WS mode 路由（默认开启）。关闭时保持 legacy ctx_pool 行为。
+    mode_router_v2_enabled: true
     # ingress 默认模式：off|ctx_pool|passthrough（仅 mode_router_v2_enabled=true 生效）
     # 兼容旧值：shared/dedicated 会按 ctx_pool 处理。
-    ingress_mode_default: ctx_pool
+    ingress_mode_default: passthrough
     # 全局总开关，默认 true；关闭时所有请求保持原有 HTTP/SSE 路由
     enabled: true
     # 按账号类型细分开关
